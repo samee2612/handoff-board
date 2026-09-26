@@ -1,16 +1,33 @@
 insert into public.units (id, name) values
   ('11111111-1111-4111-8111-111111111111', 'Fictional 4 West')
-on conflict (id) do nothing;
+on conflict (id) do update set name = excluded.name;
 
 insert into public.nurses (id, unit_id, display_name) values
-  ('22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111', 'Jamie Rivera (fictional)')
-on conflict (id) do nothing;
+  ('22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111', 'Jamie Rivera, RN (fictional)'),
+  ('66666666-6666-4666-8666-666666666666', '11111111-1111-4111-8111-111111111111', 'Morgan Lee, RN (fictional)')
+on conflict (id) do update set display_name = excluded.display_name;
 
 insert into public.patients (id, unit_id, assigned_nurse_id, display_name, room, admitted_at) values
   ('33333333-3333-4333-8333-333333333333', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', 'Ava Miller (fictional)', '401-A', now() - interval '38 hours'),
-  ('44444444-4444-4444-8444-444444444444', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', 'Ben Carter (fictional)', '401-B', now() - interval '19 hours'),
+  ('44444444-4444-4444-8444-444444444444', '11111111-1111-4111-8111-111111111111', '66666666-6666-4666-8666-666666666666', 'Ben Carter (fictional)', '401-B', now() - interval '19 hours'),
   ('55555555-5555-4555-8555-555555555555', '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', 'Clara Reed (fictional)', '402-A', now() - interval '12 hours')
-on conflict (id) do nothing;
+on conflict (id) do update set assigned_nurse_id = excluded.assigned_nurse_id;
+
+insert into public.patient_vital_monitoring_plans (
+  id, patient_id, vital_type, interval_minutes, attention_below, attention_above, urgent_below, urgent_above
+) values
+  ('77777777-7777-4777-8777-777777777771', '33333333-3333-4333-8333-333333333333', 'blood_pressure', 240, 95, null, 85, null),
+  ('77777777-7777-4777-8777-777777777772', '33333333-3333-4333-8333-333333333333', 'oxygen_saturation', 240, 93, null, 89, null),
+  ('77777777-7777-4777-8777-777777777773', '44444444-4444-4444-8444-444444444444', 'blood_pressure', 240, 95, null, 85, null),
+  ('77777777-7777-4777-8777-777777777774', '44444444-4444-4444-8444-444444444444', 'heart_rate', 720, null, 110, null, 130),
+  ('77777777-7777-4777-8777-777777777775', '55555555-5555-4555-8555-555555555555', 'oxygen_saturation', 120, 93, null, 89, null),
+  ('77777777-7777-4777-8777-777777777776', '55555555-5555-4555-8555-555555555555', 'blood_glucose', 360, 70, 180, 55, 250)
+on conflict (patient_id, vital_type) do update set
+  interval_minutes = excluded.interval_minutes,
+  attention_below = excluded.attention_below,
+  attention_above = excluded.attention_above,
+  urgent_below = excluded.urgent_below,
+  urgent_above = excluded.urgent_above;
 
 insert into public.patient_chart_events (id, patient_id, category, occurred_at, recorded_at, source_label, payload) values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', '33333333-3333-4333-8333-333333333333', 'nursing_note', now() - interval '30 minutes', now() - interval '28 minutes', 'Fictional nursing progress note', '{"summary":"Resting in bed; reports surgical-site pain at 6/10."}'),

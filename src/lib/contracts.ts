@@ -12,6 +12,15 @@ export const chartEventCategorySchema = z.enum([
 
 export type ChartEventCategory = z.infer<typeof chartEventCategorySchema>;
 
+export const vitalTypeSchema = z.enum([
+  "blood_pressure",
+  "heart_rate",
+  "temperature",
+  "oxygen_saturation",
+  "blood_glucose",
+]);
+export type VitalType = z.infer<typeof vitalTypeSchema>;
+
 export const patientSchema = z.object({
   id: z.string().uuid(),
   unitId: z.string().uuid(),
@@ -45,6 +54,7 @@ export const vitalEventSchema = eventBaseSchema.extend({
     diastolicBloodPressure: z.number().positive().optional(),
     temperatureCelsius: z.number().positive().optional(),
     oxygenSaturation: z.number().min(0).max(100).optional(),
+    bloodGlucose: z.number().positive().optional(),
   }),
 });
 
@@ -97,6 +107,29 @@ export const alertSchema = z.object({
 });
 
 export type ActionAlert = z.infer<typeof alertSchema>;
+
+/** A synthetic, patient-specific monitoring instruction. It is not a clinical order or recommendation. */
+export const vitalMonitoringPlanSchema = z
+  .object({
+    id: z.string().uuid(),
+    patientId: z.string().uuid(),
+    vitalType: vitalTypeSchema,
+    intervalMinutes: z.number().int().min(15).max(24 * 60),
+    attentionBelow: z.number().optional(),
+    attentionAbove: z.number().optional(),
+    urgentBelow: z.number().optional(),
+    urgentAbove: z.number().optional(),
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    if (plan.attentionBelow !== undefined && plan.urgentBelow !== undefined && plan.urgentBelow > plan.attentionBelow) {
+      context.addIssue({ code: "custom", message: "Urgent lower bound must not be greater than the attention lower bound." });
+    }
+    if (plan.attentionAbove !== undefined && plan.urgentAbove !== undefined && plan.urgentAbove < plan.attentionAbove) {
+      context.addIssue({ code: "custom", message: "Urgent upper bound must not be less than the attention upper bound." });
+    }
+  });
+export type VitalMonitoringPlan = z.infer<typeof vitalMonitoringPlanSchema>;
 
 export const freshnessStatusSchema = z.enum(["green", "amber", "red"]);
 export type FreshnessStatus = z.infer<typeof freshnessStatusSchema>;
@@ -190,3 +223,32 @@ export const handoffVersionSchema = z
     }
   });
 export type HandoffVersion = z.infer<typeof handoffVersionSchema>;
+
+/** Review actions are append-only records; they never mutate a handoff version. */
+export const handoffReviewActionSchema = z.enum(["reviewed", "approved", "rejected"]);
+export type HandoffReviewAction = z.infer<typeof handoffReviewActionSchema>;
+
+export const handoffReviewSchema = z
+  .object({
+    id: z.string().uuid(),
+    handoffVersionId: z.string().uuid(),
+    nurseId: z.string().uuid(),
+    nurseName: z.string().min(1),
+    action: handoffReviewActionSchema,
+    note: z.string().max(2_000).nullable(),
+    reviewedAt: isoDateTime,
+  })
+  .strict();
+export type HandoffReview = z.infer<typeof handoffReviewSchema>;
+
+export const handoffPublicationSchema = z
+  .object({
+    id: z.string().uuid(),
+    patientId: z.string().uuid(),
+    handoffVersionId: z.string().uuid(),
+    publishedByNurseId: z.string().uuid().nullable(),
+    note: z.string().max(2_000).nullable(),
+    publishedAt: isoDateTime,
+  })
+  .strict();
+export type HandoffPublication = z.infer<typeof handoffPublicationSchema>;

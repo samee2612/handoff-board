@@ -1,4 +1,4 @@
-import type { ChartEvent, Patient } from "@/lib/contracts";
+import type { ChartEvent, Patient, VitalMonitoringPlan } from "@/lib/contracts";
 
 const IDs = {
   unit: "11111111-1111-4111-8111-111111111111",
@@ -9,7 +9,7 @@ const IDs = {
 };
 
 export type DemoNurse = { id: string; displayName: string };
-export type DemoUnit = { now: Date; patients: Patient[]; chartEvents: ChartEvent[]; nurses: DemoNurse[] };
+export type DemoUnit = { now: Date; patients: Patient[]; chartEvents: ChartEvent[]; vitalMonitoringPlans: VitalMonitoringPlan[]; nurses: DemoNurse[] };
 
 const iso = (date: Date) => date.toISOString();
 const minutesBefore = (now: Date, minutes: number) => new Date(now.getTime() - minutes * 60_000);
@@ -37,7 +37,7 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
       isSynthetic: true,
       displayName: "Ben Carter (fictional)",
       room: "401-B",
-      assignedNurseId: IDs.nurse,
+      assignedNurseId: "66666666-6666-4666-8666-666666666666",
       admittedAt: iso(minutesBefore(now, 19 * 60)),
     },
     {
@@ -52,6 +52,14 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
   ];
 
   const event = <T extends ChartEvent>(value: T): T => value;
+  const vitalMonitoringPlans: VitalMonitoringPlan[] = [
+    { id: "77777777-7777-4777-8777-777777777771", patientId: IDs.ava, vitalType: "blood_pressure", intervalMinutes: 240, attentionBelow: 95, urgentBelow: 85 },
+    { id: "77777777-7777-4777-8777-777777777772", patientId: IDs.ava, vitalType: "oxygen_saturation", intervalMinutes: 240, attentionBelow: 93, urgentBelow: 89 },
+    { id: "77777777-7777-4777-8777-777777777773", patientId: IDs.ben, vitalType: "blood_pressure", intervalMinutes: 240, attentionBelow: 95, urgentBelow: 85 },
+    { id: "77777777-7777-4777-8777-777777777774", patientId: IDs.ben, vitalType: "heart_rate", intervalMinutes: 720, attentionAbove: 110, urgentAbove: 130 },
+    { id: "77777777-7777-4777-8777-777777777775", patientId: IDs.clara, vitalType: "oxygen_saturation", intervalMinutes: 120, attentionBelow: 93, urgentBelow: 89 },
+    { id: "77777777-7777-4777-8777-777777777776", patientId: IDs.clara, vitalType: "blood_glucose", intervalMinutes: 360, attentionBelow: 70, urgentBelow: 55, attentionAbove: 180, urgentAbove: 250 },
+  ];
   const chartEvents: ChartEvent[] = [
     event({
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
@@ -159,5 +167,5 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
     }),
   ];
 
-  return { now, patients, chartEvents, nurses };
+  return { now, patients, chartEvents, vitalMonitoringPlans, nurses };
 }

@@ -20,16 +20,28 @@ OpenAI key. Run `npm run typecheck`, `npm test`, and `npm run build` before chan
 ## Optional Supabase setup
 
 Create a Supabase project, copy `.env.example` to `.env.local`, and add the project URL, anon
-key, and the **server-only** service-role key. Apply both migrations in order, then run
+key, the **server-only** service-role key, and a long random `DEMO_SESSION_SECRET`. Apply all
+migrations in order, then run
 `supabase/seed.sql` against that project. Step 4 uses the service key only on the Next.js server
 to load and persist synthetic candidates. It never reaches the browser.
 
-Step 4 enables a browser Realtime subscription only for inserted rows in
-`patient_chart_events`. A new event updates deterministic tile alerts/freshness and marks the
-existing handoff stale; it never invokes an LLM or publishes a handoff automatically. The nurse
-must select **Refresh handoff** to create an immutable `candidate` version. Candidate versions are
-not auto-published. The demo's public Supabase read policies are deliberately restricted to rows
-whose patient is marked `is_synthetic = true`; do not reuse them for real clinical data.
+The shared workflow requires this Supabase setup. A selected fictional nurse receives a signed,
+HTTP-only demo session; review notes, approvals, rejections, publications, and audit events are
+written by server-only database functions. Candidate versions stay immutable. Publishing appends a
+publication event, so the current published handoff is determined by the latest publication rather
+than by the highest version number.
+
+The vital-monitoring demo adds a patient-specific synthetic monitoring plan for BP, heart rate,
+temperature, oxygen saturation, or blood glucose. When a fictional nurse records a new vital,
+the server appends a source event, deterministically calculates the next due time and configured
+synthetic attention tier, then creates an immutable, evidence-linked candidate handoff. A nurse
+still reviews and publishes that candidate; the system never auto-publishes or makes a clinical
+decision.
+
+Supabase Realtime subscribes to inserted `patient_chart_events`, handoff candidates, reviews, and
+publications so connected boards update immediately. The demo's public Supabase read policies are
+deliberately restricted to rows whose patient is marked `is_synthetic = true`; do not reuse them
+for real clinical data.
 
 ## Model selection
 
@@ -54,14 +66,15 @@ CLI—never in source control.
    the detected Next.js settings (`npm ci`, then `npm run build`).
 2. Set `HANDOFF_BOARD_DATA_MODE=synthetic-only` in both Preview and Production. Hosted requests
    fail closed if this declaration is missing or has any other value.
-3. For the default fixture-only deployment, leave the remaining values unset. For optional live
-   synthetic Supabase updates, first apply the migrations and seed data, then set:
+3. For the default fixture-only deployment, leave the remaining values unset. To use the shared
+   vital-recording workflow, apply all migrations and seed data, then set:
 
    | Variable | Exposure | Purpose |
    | --- | --- | --- |
    | `NEXT_PUBLIC_SUPABASE_URL` | Public | Synthetic Supabase project URL. |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public | Browser Realtime connection for synthetic source events. |
    | `SUPABASE_SERVICE_ROLE_KEY` | Secret | Server-only synthetic candidate persistence. Never prefix this with `NEXT_PUBLIC_`. |
+   | `DEMO_SESSION_SECRET` | Secret | Long random value used to sign controlled fictional-nurse sessions. |
    | `OPENAI_API_KEY` | Secret | Optional offline pipeline evaluation only; the public refresh route cannot call it. |
 
 4. Deploy from `main`. GitHub Actions verifies type checks, tests, and a production build before

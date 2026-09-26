@@ -21,3 +21,27 @@ export function subscribeToSourceEvents(
 
   return () => { void client.removeChannel(channel); };
 }
+
+export type WorkflowRealtimeHandlers = {
+  onVersion: (row: Record<string, unknown>) => void;
+  onReview: (row: Record<string, unknown>) => void;
+  onPublication: (row: Record<string, unknown>) => void;
+  onStatus: (status: "connected" | "error") => void;
+};
+
+/** Shared workflow data is append-only, so subscriptions only accept INSERT notifications. */
+export function subscribeToHandoffWorkflow(client: SupabaseClient, handlers: WorkflowRealtimeHandlers) {
+  const channel = client
+    .channel("synthetic-handoff-workflow")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "handoff_versions" }, (payload) => {
+      handlers.onVersion(payload.new as Record<string, unknown>);
+    })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "handoff_reviews" }, (payload) => {
+      handlers.onReview(payload.new as Record<string, unknown>);
+    })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "handoff_publications" }, (payload) => {
+      handlers.onPublication(payload.new as Record<string, unknown>);
+    })
+    .subscribe((status) => handlers.onStatus(status === "SUBSCRIBED" ? "connected" : "error"));
+  return () => { void client.removeChannel(channel); };
+}

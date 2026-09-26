@@ -1,60 +1,80 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ActionAlert, ChartEvent, HandoffClaim, HandoffVersion } from "@/lib/contracts";
+import type { ChartEvent, HandoffVersion, VitalMonitoringPlan } from "@/lib/contracts";
 import type { DemoNurse } from "@/lib/demo/seed-data";
 import type { FoundationPatientSnapshot } from "@/lib/engine/board";
-import { coverageStatus, sortBoardTiles, type BoardTile, type TileReview } from "@/lib/board/priority";
-import { applyCandidateVersion, applySourceEvent, createLiveBoardState, isHandoffStale } from "@/lib/board/live-board";
+import { applySourceEvent, createLiveBoardState } from "@/lib/board/live-board";
 import { createOptionalSupabaseClient } from "@/lib/supabase/client";
-import { subscribeToSourceEvents } from "@/lib/supabase/realtime";
+import { handoffVersionFromSupabaseRow } from "@/lib/supabase/mappers";
+import { subscribeToHandoffWorkflow, subscribeToSourceEvents } from "@/lib/supabase/realtime";
 import type { BoardMode } from "@/lib/supabase/board-data";
+import { evaluateVitalMonitoring, vitalLabel, type VitalMonitoringStatus } from "@/lib/vitals/monitoring";
 
 type ShiftBoardProps = {
   snapshots: FoundationPatientSnapshot[];
   events: ChartEvent[];
   handoffs: HandoffVersion[];
+  candidates: HandoffVersion[];
   nurses: DemoNurse[];
+  vitalMonitoringPlans: VitalMonitoringPlan[];
   demoNow: string;
   boardMode: BoardMode;
   sourceMessage?: string;
 };
 
-const sectionLabels = {
-  situation: "Situation",
-  background: "Background",
-  assessment: "Assessment",
-  recommendation: "Recommendation",
-} as const;
-
-function relativeDue(dueAt: string, now: string): string {
-  const minutes = Math.round((new Date(dueAt).getTime() - new Date(now).getTime()) / 60_000);
-  if (minutes < 0) return `${Math.abs(minutes)} min overdue`;
-  if (minutes === 0) return "due now";
-  return `due in ${minutes} min`;
+function readApiError(payload: unknown, fallback: string): string {
+  return typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "string" ? payload.error : fallback;
 }
 
-function alertLabel(alert: ActionAlert, now: string): string {
-  const kind = alert.kind === "eligible_prn" ? "PRN eligible" : alert.kind === "task" ? "Task" : "Medication";
-  return `${kind}: ${alert.title} · ${relativeDue(alert.dueAt, now)}`;
+function time(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet recorded";
 }
 
-function statusCopy(status: "green" | "amber" | "red") {
-  if (status === "green") return { icon: "●", label: "Evidence and data current" };
-  if (status === "amber") return { icon: "▲", label: "Evidence or data needs review" };
-  return { icon: "!", label: "Missing evidence or required data" };
+function attentionLabel(attention: VitalMonitoringStatus["attention"]): string {
+  if (attention === "urgent") return "Synthetic urgent-review flag";
+  if (attention === "attention") return "Synthetic attention flag";
+  return "Monitoring on schedule";
 }
 
-export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow, boardMode, sourceMessage }: ShiftBoardProps) {
+function monitoringPriority(status: VitalMonitoringStatus): number {
+  if (status.attention === "urgent") return 0;
+  if (status.attention === "attention") return 1;
+  return 2;
+}
+
+function nextHandoffLine(status: VitalMonitoringStatus): string {
+  const label = vitalLabel(status.plan.vitalType);
+  if (!status.displayValue) return `${label} has not been recorded. Record the first reading for this monitoring plan.`;
+  const flag = status.attention === "routine" ? "" : ` ${attentionLabel(status.attention)}.`;
+  return `Latest ${label}: ${status.displayValue} at ${time(status.latestEvent?.recordedAt)}. Next ${label} check: ${time(status.nextDueAt)}.${flag}`;
+}
+
+export function ShiftBoard({ snapshots, events, handoffs, candidates, nurses, vitalMonitoringPlans, demoNow, boardMode, sourceMessage }: ShiftBoardProps) {
   const [selectedNurseId, setSelectedNurseId] = useState(nurses[0]?.id ?? "");
+  const [identityError, setIdentityError] = useState<string | null>(null);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<Record<string, TileReview>>({});
-  const [draftNote, setDraftNote] = useState("");
   const [board, setBoard] = useState(() => createLiveBoardState({ patients: snapshots.map((snapshot) => snapshot.patient), events, handoffs, now: new Date(demoNow) }));
+  const [candidateVersions, setCandidateVersions] = useState(candidates);
   const [sourceStatus, setSourceStatus] = useState<"fixture" | "connecting" | "live" | "error">(boardMode === "realtime" ? "connecting" : "fixture");
-  const [refreshingPatientId, setRefreshingPatientId] = useState<string | null>(null);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-  const selectedNurse = nurses.find((nurse) => nurse.id === selectedNurseId) ?? nurses[0];
+  const [recordingPatientId, setRecordingPatientId] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+
+  const nurseById = useMemo(() => new Map(nurses.map((nurse) => [nurse.id, nurse])), [nurses]);
+
+  useEffect(() => {
+    if (boardMode === "fixture") return;
+    let active = true;
+    void fetch("/api/demo-session")
+      .then(async (response) => ({ response, payload: await response.json() as { nurseId?: string | null; error?: string } }))
+      .then(({ response, payload }) => {
+        if (!active) return;
+        if (!response.ok) setIdentityError(readApiError(payload, "Controlled demo identity is unavailable."));
+        else if (payload.nurseId && nurseById.has(payload.nurseId)) setSelectedNurseId(payload.nurseId);
+      })
+      .catch(() => { if (active) setIdentityError("Controlled demo identity is unavailable."); });
+    return () => { active = false; };
+  }, [boardMode, nurseById]);
 
   useEffect(() => {
     if (boardMode !== "realtime") return;
@@ -63,229 +83,108 @@ export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow, board
       setSourceStatus("error");
       return;
     }
-    return subscribeToSourceEvents(
-      client,
-      (event) => setBoard((current) => applySourceEvent(current, event, new Date())),
-      (status) => setSourceStatus(status === "connected" ? "live" : "error"),
-    );
+    const unsubscribeSource = subscribeToSourceEvents(client, (event) => setBoard((current) => applySourceEvent(current, event, new Date())), (status) => setSourceStatus(status === "connected" ? "live" : "error"));
+    const unsubscribeWorkflow = subscribeToHandoffWorkflow(client, {
+      onVersion: (row) => {
+        const version = handoffVersionFromSupabaseRow(row);
+        if (version?.status === "candidate") setCandidateVersions((current) => current.some((item) => item.id === version.id) ? current : [...current, version]);
+      },
+      onReview: () => undefined,
+      onPublication: () => undefined,
+      onStatus: (status) => { if (status === "error") setSourceStatus("error"); },
+    });
+    return () => { unsubscribeSource(); unsubscribeWorkflow(); };
   }, [boardMode]);
 
-  const tiles = useMemo(() => {
-    const versionByPatient = new Map(board.handoffs.map((handoff) => [handoff.patientId, handoff]));
-    return sortBoardTiles(
-      board.snapshots.flatMap((snapshot) => {
-        const handoff = versionByPatient.get(snapshot.patient.id);
-        return handoff ? [{ ...snapshot, handoff, review: reviews[snapshot.patient.id], stale: isHandoffStale(handoff, board.events) }] : [];
-      }),
-    );
-  }, [board, reviews]);
+  const monitoringByPatient = useMemo(() => {
+    const value = new Map<string, VitalMonitoringStatus[]>();
+    for (const patient of board.snapshots.map((snapshot) => snapshot.patient)) {
+      const patientEvents = board.events.filter((event) => event.patientId === patient.id);
+      value.set(patient.id, vitalMonitoringPlans.filter((plan) => plan.patientId === patient.id).map((plan) => evaluateVitalMonitoring(patientEvents, plan)));
+    }
+    return value;
+  }, [board.events, board.snapshots, vitalMonitoringPlans]);
 
-  const selectedTile = tiles.find((tile) => tile.patient.id === selectedPatientId) ?? null;
+  const latestCandidateByPatient = useMemo(() => {
+    const value = new Map<string, HandoffVersion>();
+    for (const candidate of candidateVersions) {
+      const current = value.get(candidate.patientId);
+      if (!current || candidate.versionNumber > current.versionNumber) value.set(candidate.patientId, candidate);
+    }
+    return value;
+  }, [candidateVersions]);
 
-  useEffect(() => {
-    setDraftNote(selectedTile?.review?.note ?? "");
-  }, [selectedTile?.patient.id, selectedTile?.review?.note]);
+  const tiles = useMemo(() => board.snapshots
+    .map((snapshot) => ({ snapshot, monitoring: monitoringByPatient.get(snapshot.patient.id) ?? [] }))
+    .sort((left, right) => {
+      const leftPrimary = [...left.monitoring].sort((a, b) => monitoringPriority(a) - monitoringPriority(b) || new Date(a.nextDueAt ?? 0).getTime() - new Date(b.nextDueAt ?? 0).getTime())[0];
+      const rightPrimary = [...right.monitoring].sort((a, b) => monitoringPriority(a) - monitoringPriority(b) || new Date(a.nextDueAt ?? 0).getTime() - new Date(b.nextDueAt ?? 0).getTime())[0];
+      const fallback = { attention: "routine" } as VitalMonitoringStatus;
+      return monitoringPriority(leftPrimary ?? fallback) - monitoringPriority(rightPrimary ?? fallback) || left.snapshot.patient.room.localeCompare(right.snapshot.patient.room);
+    }), [board.snapshots, monitoringByPatient]);
 
-  function saveReview() {
-    if (!selectedTile || !selectedNurse) return;
-    setReviews((current) => ({
-      ...current,
-      [selectedTile.patient.id]: {
-        nurseId: selectedNurse.id,
-        nurseName: selectedNurse.displayName,
-        note: draftNote.trim(),
-        reviewedAt: new Date().toISOString(),
-      },
-    }));
-  }
+  const selected = tiles.find((tile) => tile.snapshot.patient.id === selectedPatientId) ?? null;
 
-  async function refreshHandoff(patientId: string) {
-    setRefreshingPatientId(patientId);
-    setRefreshError(null);
+  async function selectNurse(nurseId: string) {
+    setSelectedNurseId(nurseId);
+    if (boardMode === "fixture") return;
+    setIdentityError(null);
     try {
-      const response = await fetch("/api/handoffs/candidates", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ patientId }),
-      });
+      const response = await fetch("/api/demo-session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ nurseId }) });
       const payload: unknown = await response.json();
-      if (!response.ok || typeof payload !== "object" || payload === null || !("id" in payload)) {
-        const message = typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "string"
-          ? payload.error : "Candidate generation failed. The previous handoff remains unchanged.";
-        throw new Error(message);
-      }
-      setBoard((current) => applyCandidateVersion(current, payload as HandoffVersion));
+      if (!response.ok) throw new Error(readApiError(payload, "The selected nurse could not be activated."));
     } catch (error) {
-      setRefreshError(error instanceof Error ? error.message : "Candidate generation failed. The previous handoff remains unchanged.");
-    } finally {
-      setRefreshingPatientId(null);
+      setIdentityError(error instanceof Error ? error.message : "The selected nurse could not be activated.");
     }
   }
 
-  const staleCount = tiles.filter((tile) => tile.stale).length;
+  async function recordComment(patientId: string, note: string): Promise<boolean> {
+    setRecordingPatientId(patientId);
+    setRecordingError(null);
+    try {
+      const response = await fetch("/api/vitals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ patientId, note }) });
+      const payload: unknown = await response.json();
+      if (!response.ok || typeof payload !== "object" || payload === null || !("event" in payload) || !("candidate" in payload)) {
+        throw new Error(readApiError(payload, "The vital update could not be processed."));
+      }
+      const result = payload as { event: ChartEvent; candidate: HandoffVersion };
+      setBoard((current) => applySourceEvent(current, result.event, new Date(result.event.recordedAt)));
+      setCandidateVersions((current) => current.some((item) => item.id === result.candidate.id) ? current : [...current, result.candidate]);
+      return true;
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : "The vital update could not be processed.");
+      return false;
+    } finally {
+      setRecordingPatientId(null);
+    }
+  }
 
-  return (
-    <main className="board-shell">
-      <header className="board-header">
-        <div>
-          <p className="eyebrow">SYNTHETIC DATA ONLY · DEMO UNIT</p>
-          <h1>Shift Handoff Board</h1>
-          <p className="header-copy">Prioritized handoffs with source-linked SBAR evidence. This is decision support, not clinical direction.</p>
-          <p className={`source-state source-${sourceStatus}`} role="status">{sourceStatus === "live" ? "Live synthetic source events connected" : sourceStatus === "connecting" ? "Connecting to live synthetic source events…" : sourceStatus === "error" ? "Live source connection unavailable" : "Local synthetic fixture mode"}</p>
-        </div>
-        <label className="nurse-select">
-          <span>Reviewing nurse</span>
-          <select value={selectedNurseId} onChange={(event) => setSelectedNurseId(event.target.value)}>
-            {nurses.map((nurse) => <option key={nurse.id} value={nurse.id}>{nurse.displayName}</option>)}
-          </select>
-        </label>
-      </header>
-
-      {sourceMessage && <p className="source-banner source-banner-warning" role="status">{sourceMessage}</p>}
-      {staleCount > 0 && <p className="source-banner source-banner-stale" role="status" aria-live="polite">{staleCount} handoff{staleCount === 1 ? " has" : "s have"} newer source data. Refresh each affected handoff to create a candidate version.</p>}
-      {refreshError && <p className="source-banner source-banner-error" role="alert">{refreshError}</p>}
-
-      <section aria-labelledby="board-heading">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">4 WEST · SHIFT CENSUS</p>
-            <h2 id="board-heading">Patient handoffs</h2>
-          </div>
-          <p className="priority-key" aria-label="Priority order: overdue and imminent actions are shown first, followed by evidence status and review state.">Prioritized by action, evidence status, then review state</p>
-        </div>
-        <div className="tile-grid">
-          {tiles.map((tile) => (
-            <PatientTile key={tile.patient.id} tile={tile} demoNow={board.evaluatedAt} onOpen={() => setSelectedPatientId(tile.patient.id)} />
-          ))}
-        </div>
-      </section>
-
-      {selectedTile && (
-        <SbarDrawer
-          tile={selectedTile}
-          events={board.events.filter((event) => event.patientId === selectedTile.patient.id)}
-          demoNow={board.evaluatedAt}
-          selectedNurse={selectedNurse}
-          draftNote={draftNote}
-          onDraftNoteChange={setDraftNote}
-          onSaveReview={saveReview}
-          onClose={() => setSelectedPatientId(null)}
-          onRefresh={() => refreshHandoff(selectedTile.patient.id)}
-          isRefreshing={refreshingPatientId === selectedTile.patient.id}
-          canRefresh={boardMode !== "degraded"}
-        />
-      )}
-    </main>
-  );
+  return <main className="board-shell vital-board-shell">
+    <header className="board-header compact-header">
+      <div><p className="eyebrow">SYNTHETIC VITAL-MONITORING DEMO</p><h1>Vital Handoff Board</h1><p className="header-copy">Record a nursing update. The handoff stays current for the next nurse.</p></div>
+      <label className="nurse-select"><span>Current nurse</span><select value={selectedNurseId} onChange={(event) => { void selectNurse(event.target.value); }}>{nurses.map((nurse) => <option key={nurse.id} value={nurse.id}>{nurse.displayName}</option>)}</select><span className="identity-copy">{sourceStatus === "live" ? "Shared synthetic board" : "Local synthetic demo"}</span></label>
+    </header>
+    {sourceMessage && <p className="source-banner source-banner-warning" role="status">{sourceMessage}</p>}
+    {identityError && <p className="source-banner source-banner-error" role="alert">{identityError}</p>}
+    {recordingError && <p className="source-banner source-banner-error" role="alert">{recordingError}</p>}
+    <section aria-labelledby="board-heading"><div className="section-heading"><div><p className="eyebrow">4 WEST · SHIFT CENSUS</p><h2 id="board-heading">Patients</h2></div></div><div className="tile-grid">{tiles.map(({ snapshot, monitoring }) => <PatientTile key={snapshot.patient.id} snapshot={snapshot} monitoring={monitoring} onOpen={() => setSelectedPatientId(snapshot.patient.id)} />)}</div></section>
+    {selected && <PatientDrawer snapshot={selected.snapshot} monitoring={selected.monitoring} candidate={latestCandidateByPatient.get(selected.snapshot.patient.id) ?? null} recording={recordingPatientId === selected.snapshot.patient.id} onRecord={(note) => recordComment(selected.snapshot.patient.id, note)} onClose={() => setSelectedPatientId(null)} />}
+  </main>;
 }
 
-function PatientTile({ tile, demoNow, onOpen }: { tile: BoardTile & { stale: boolean }; demoNow: string; onOpen: () => void }) {
-  const status = coverageStatus(tile);
-  const statusText = statusCopy(status);
-  const strongestAlert = tile.alerts.find((alert) => alert.priority === "overdue") ?? tile.alerts[0];
-  return (
-    <article className={`patient-tile coverage-${status}`}>
-      <div className="tile-topline">
-        <p className="room">ROOM {tile.patient.room}</p>
-        <span className={`coverage-badge coverage-${status}`} role="status" aria-label={statusText.label}>
-          <span aria-hidden="true">{statusText.icon}</span> {statusText.label}
-        </span>
-      </div>
-      <h3>{tile.patient.displayName}</h3>
-      <p className="tile-meta">Assigned to Jamie Rivera, RN</p>
-      {tile.stale && <p className="stale-chip" role="status">New source data · refresh required</p>}
-      {strongestAlert ? (
-        <p className={`action-alert ${strongestAlert.priority === "overdue" ? "is-overdue" : ""}`}>{alertLabel(strongestAlert, demoNow)}</p>
-      ) : <p className="no-actions">No due or overdue demo items</p>}
-      <div className="tile-bottom">
-        <span className={`review-state ${tile.review ? "is-reviewed" : ""}`}>{tile.review ? `Reviewed by ${tile.review.nurseName.split(",")[0]}` : "Needs review"}</span>
-        <button type="button" className="open-handoff" onClick={onOpen} aria-label={`Open handoff for ${tile.patient.displayName}`}>Open handoff <span aria-hidden="true">→</span></button>
-      </div>
-    </article>
-  );
+function PatientTile({ snapshot, monitoring, onOpen }: { snapshot: FoundationPatientSnapshot; monitoring: VitalMonitoringStatus[]; onOpen: () => void }) {
+  const primary = [...monitoring].sort((left, right) => monitoringPriority(left) - monitoringPriority(right) || new Date(left.nextDueAt ?? 0).getTime() - new Date(right.nextDueAt ?? 0).getTime())[0];
+  return <article className={`patient-tile vital-tile monitoring-${primary?.attention ?? "routine"}`}><p className="room">ROOM {snapshot.patient.room}</p><h3>{snapshot.patient.displayName}</h3>{primary ? <><p className="vital-current"><strong>{vitalLabel(primary.plan.vitalType)}</strong> {primary.displayValue ?? "No recorded value"}</p><p className="vital-next">Next check: {time(primary.nextDueAt)}</p><p className="vital-state">{attentionLabel(primary.attention)}</p></> : <p className="no-actions">No active monitoring plan</p>}<button type="button" className="open-handoff" onClick={onOpen}>Open patient <span aria-hidden="true">→</span></button></article>;
 }
 
-type DrawerProps = {
-  tile: BoardTile & { stale: boolean };
-  events: ChartEvent[];
-  demoNow: string;
-  selectedNurse: DemoNurse | undefined;
-  draftNote: string;
-  onDraftNoteChange: (note: string) => void;
-  onSaveReview: () => void;
-  onClose: () => void;
-  onRefresh: () => void;
-  isRefreshing: boolean;
-  canRefresh: boolean;
-};
-
-function SbarDrawer({ tile, events, demoNow, selectedNurse, draftNote, onDraftNoteChange, onSaveReview, onClose, onRefresh, isRefreshing, canRefresh }: DrawerProps) {
-  const claimsBySection = Object.keys(sectionLabels).map((section) => ({
-    section: section as keyof typeof sectionLabels,
-    claims: tile.handoff.claims.filter((claim) => claim.section === section),
-  }));
-  const status = coverageStatus(tile);
-  const statusText = statusCopy(status);
-
-  return (
-    <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}>
-      <aside className="sbar-drawer" role="dialog" aria-modal="true" aria-labelledby="handoff-title" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="drawer-header">
-          <div>
-            <p className="eyebrow">ROOM {tile.patient.room} · {tile.handoff.status === "candidate" ? "CANDIDATE" : "HANDOFF"} v{tile.handoff.versionNumber}</p>
-            <h2 id="handoff-title">{tile.patient.displayName}</h2>
-          </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close handoff">×</button>
-        </header>
-
-        <div className={`status-panel coverage-${status}`} role="status">
-          <span aria-hidden="true">{statusText.icon}</span>
-          <div><strong>{statusText.label}</strong><p>Color reflects evidence coverage and data freshness, not patient acuity.</p></div>
-        </div>
-
-        {tile.stale && <section className="stale-panel" aria-label="Handoff needs refresh"><strong>New source data is available.</strong><p>The displayed version is unchanged. Create a candidate only after explicitly refreshing.</p></section>}
-        {tile.handoff.status === "candidate" && <section className="candidate-panel" aria-label="Candidate version"><strong>Candidate version</strong><p>This immutable candidate was created by an explicit refresh and is not auto-published.</p></section>}
-
-        <div className="refresh-row"><button className="refresh-button" type="button" onClick={onRefresh} disabled={!canRefresh || isRefreshing}>{isRefreshing ? "Creating candidate…" : "Refresh handoff"}</button><p>{canRefresh ? "Creates a new candidate from currently available synthetic source events." : "Refresh is unavailable while Supabase is disconnected."}</p></div>
-
-        {tile.alerts.length > 0 && <section className="drawer-section" aria-labelledby="upcoming-heading"><h3 id="upcoming-heading">Upcoming items</h3><ul className="alert-list">{tile.alerts.map((alert) => <li key={alert.id} className={alert.priority === "overdue" ? "is-overdue" : ""}>{alertLabel(alert, demoNow)}</li>)}</ul></section>}
-
-        <section className="drawer-section" aria-labelledby="sbar-heading">
-          <h3 id="sbar-heading">SBAR handoff</h3>
-          {tile.handoff.status === "failed" ? <p className="failure-copy">Handoff unavailable: {tile.handoff.failure?.message ?? "Unknown generation failure."}</p> : (
-            <div className="sbar-sections">
-              {claimsBySection.map(({ section, claims }) => <SbarSection key={section} section={section} claims={claims} events={events} />)}
-            </div>
-          )}
-        </section>
-
-        {tile.handoff.excludedClaims.length > 0 && <section className="drawer-section evidence-gap"><h3>Evidence gaps</h3><p>{tile.handoff.excludedClaims.length} claim{tile.handoff.excludedClaims.length === 1 ? "" : "s"} withheld from this handoff because verification did not support them.</p></section>}
-
-        <form className="review-form" onSubmit={(event) => { event.preventDefault(); onSaveReview(); }}>
-          <div className="review-form-heading"><div><h3>Review handoff</h3><p>{selectedNurse ? `As ${selectedNurse.displayName}` : "Choose a nurse to review."}</p></div>{tile.review && <span className="reviewed-time">Reviewed locally</span>}</div>
-          <label htmlFor="handoff-note">Incoming-nurse note <span>(optional)</span></label>
-          <textarea id="handoff-note" value={draftNote} onChange={(event) => onDraftNoteChange(event.target.value)} placeholder="Add a concise shift note for this demo…" rows={3} />
-          <button className="review-button" type="submit" disabled={!selectedNurse}>{tile.review ? "Update review" : "Mark reviewed"}</button>
-        </form>
-      </aside>
-    </div>
-  );
-}
-
-function SbarSection({ section, claims, events }: { section: keyof typeof sectionLabels; claims: HandoffClaim[]; events: ChartEvent[] }) {
-  const eventById = new Map(events.map((event) => [event.id, event]));
-  return (
-    <section className="sbar-section">
-      <h4>{sectionLabels[section]}</h4>
-      {claims.length === 0 ? <p className="empty-section">No evidence-supported content available.</p> : claims.map((claim) => (
-        <details key={claim.id} className="claim-detail">
-          <summary>{claim.text}</summary>
-          <div className="evidence-inspector"><p className="evidence-title">Evidence inspector</p>{claim.evidenceEventIds.map((eventId) => {
-            const event = eventById.get(eventId);
-            return event ? <div key={event.id} className="evidence-source"><strong>{event.sourceLabel}</strong><span>{event.category.replace("_", " ")} · {new Date(event.recordedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div> : <p key={eventId}>Missing source: {eventId}</p>;
-          })}</div>
-        </details>
-      ))}
-    </section>
-  );
+function PatientDrawer({ snapshot, monitoring, candidate, recording, onRecord, onClose }: { snapshot: FoundationPatientSnapshot; monitoring: VitalMonitoringStatus[]; candidate: HandoffVersion | null; recording: boolean; onRecord: (note: string) => Promise<boolean>; onClose: () => void }) {
+  const [note, setNote] = useState("");
+  const handoffLines = candidate?.claims.filter((claim) => claim.id.startsWith("vital-monitoring:")).map((claim) => claim.text) ?? [];
+  const displayedHandoff = handoffLines.length > 0 ? handoffLines : monitoring.map(nextHandoffLine);
+  return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="sbar-drawer vital-drawer" role="dialog" aria-modal="true" aria-labelledby="handoff-title" onMouseDown={(event) => event.stopPropagation()}>
+    <header className="drawer-header"><div><p className="eyebrow">ROOM {snapshot.patient.room}</p><h2 id="handoff-title">{snapshot.patient.displayName}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close patient">×</button></header>
+    <section className="drawer-section"><p className="eyebrow">CURRENT MONITORING</p><div className="monitoring-list">{monitoring.map((status) => <div key={status.plan.id} className={`monitoring-row monitoring-${status.attention}`}><strong>{vitalLabel(status.plan.vitalType)} {status.displayValue ?? "not recorded"}</strong><span>Recorded: {time(status.latestEvent?.recordedAt)}</span><span>Next check: {time(status.nextDueAt)}</span></div>)}</div></section>
+    <section className="nursing-update"><p className="eyebrow">NURSING UPDATE</p><h3>What did you record?</h3><p>Write naturally. Example: <em>“BP 118/72 at 4 pm”</em> or <em>“SpO2 was 97% at 4:20 pm.”</em></p><form onSubmit={async (event) => { event.preventDefault(); if (await onRecord(note)) setNote(""); }}><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. BP recorded 118/72 at 4 pm" rows={4} required /><button className="record-vital-button" type="submit" disabled={recording || note.trim().length < 3}>{recording ? "Reading update…" : "Update handoff"}</button></form></section>
+    <section className="handoff-output" aria-live="polite"><p className="eyebrow">NEXT NURSE HANDOFF</p><h3>{candidate ? "New handoff draft" : "Current handoff"}</h3>{displayedHandoff.map((line, index) => <p key={`${index}-${line}`}>{line}</p>)}<p className="agent-trail">Vital parsed → monitoring plan checked → handoff updated</p></section>
+  </aside></div>;
 }

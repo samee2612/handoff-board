@@ -13,7 +13,10 @@ export default async function Home() {
     snapshots={board.snapshots}
     events={board.events}
     handoffs={board.handoffs}
+    candidates={board.candidates}
+    reviews={board.reviews}
     nurses={board.nurses}
+    vitalMonitoringPlans={board.vitalMonitoringPlans}
     demoNow={board.evaluatedAt}
     boardMode={board.mode}
     sourceMessage={board.sourceMessage}

@@ -26,7 +26,7 @@ function toCandidate(version: HandoffVersion): HandoffVersion {
   return version.status === "published" ? { ...version, status: "candidate" } : version;
 }
 
-async function persistCandidate(version: HandoffVersion): Promise<HandoffVersion> {
+export async function persistCandidateVersion(version: HandoffVersion): Promise<HandoffVersion> {
   const client = createOptionalSupabaseServiceClient();
   if (!client) throw new CandidateRefreshError("SETUP_REQUIRED", "Supabase persistence is not configured for this demo.");
   const { data, error } = await client.rpc("append_handoff_version", {
@@ -49,7 +49,7 @@ async function persistCandidate(version: HandoffVersion): Promise<HandoffVersion
 /** Explicit-only generation. A Realtime event never calls this function automatically. */
 export async function createCandidateVersion(patientId: string): Promise<HandoffVersion> {
   const stored = await loadSyntheticPatientAndEvents(patientId);
-  if (stored) return persistCandidate(toCandidate(await refreshPipeline().generate(stored.patient, stored.events, new Date())));
+  if (stored) return persistCandidateVersion(toCandidate(await refreshPipeline().generate(stored.patient, stored.events, new Date())));
 
   if (createOptionalSupabaseServiceClient()) throw new CandidateRefreshError("NOT_FOUND", "The requested synthetic patient was not found.");
   const demo = createDemoUnit();
