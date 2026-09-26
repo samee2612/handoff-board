@@ -5,6 +5,10 @@ import type { ActionAlert, ChartEvent, HandoffClaim, HandoffVersion } from "@/li
 import type { DemoNurse } from "@/lib/demo/seed-data";
 import type { FoundationPatientSnapshot } from "@/lib/engine/board";
 import { coverageStatus, sortBoardTiles, type BoardTile, type TileReview } from "@/lib/board/priority";
+import { applyCandidateVersion, applySourceEvent, createLiveBoardState, isHandoffStale } from "@/lib/board/live-board";
+import { createOptionalSupabaseClient } from "@/lib/supabase/client";
+import { subscribeToSourceEvents } from "@/lib/supabase/realtime";
+import type { BoardMode } from "@/lib/supabase/board-data";
 
 type ShiftBoardProps = {
   snapshots: FoundationPatientSnapshot[];
@@ -12,6 +16,8 @@ type ShiftBoardProps = {
   handoffs: HandoffVersion[];
   nurses: DemoNurse[];
   demoNow: string;
+  boardMode: BoardMode;
+  sourceMessage?: string;
 };
 
 const sectionLabels = {
@@ -39,22 +45,40 @@ function statusCopy(status: "green" | "amber" | "red") {
   return { icon: "!", label: "Missing evidence or required data" };
 }
 
-export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow }: ShiftBoardProps) {
+export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow, boardMode, sourceMessage }: ShiftBoardProps) {
   const [selectedNurseId, setSelectedNurseId] = useState(nurses[0]?.id ?? "");
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [reviews, setReviews] = useState<Record<string, TileReview>>({});
   const [draftNote, setDraftNote] = useState("");
+  const [board, setBoard] = useState(() => createLiveBoardState({ patients: snapshots.map((snapshot) => snapshot.patient), events, handoffs, now: new Date(demoNow) }));
+  const [sourceStatus, setSourceStatus] = useState<"fixture" | "connecting" | "live" | "error">(boardMode === "realtime" ? "connecting" : "fixture");
+  const [refreshingPatientId, setRefreshingPatientId] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const selectedNurse = nurses.find((nurse) => nurse.id === selectedNurseId) ?? nurses[0];
 
+  useEffect(() => {
+    if (boardMode !== "realtime") return;
+    const client = createOptionalSupabaseClient();
+    if (!client) {
+      setSourceStatus("error");
+      return;
+    }
+    return subscribeToSourceEvents(
+      client,
+      (event) => setBoard((current) => applySourceEvent(current, event, new Date())),
+      (status) => setSourceStatus(status === "connected" ? "live" : "error"),
+    );
+  }, [boardMode]);
+
   const tiles = useMemo(() => {
-    const versionByPatient = new Map(handoffs.map((handoff) => [handoff.patientId, handoff]));
+    const versionByPatient = new Map(board.handoffs.map((handoff) => [handoff.patientId, handoff]));
     return sortBoardTiles(
-      snapshots.flatMap((snapshot) => {
+      board.snapshots.flatMap((snapshot) => {
         const handoff = versionByPatient.get(snapshot.patient.id);
-        return handoff ? [{ ...snapshot, handoff, review: reviews[snapshot.patient.id] }] : [];
+        return handoff ? [{ ...snapshot, handoff, review: reviews[snapshot.patient.id], stale: isHandoffStale(handoff, board.events) }] : [];
       }),
     );
-  }, [handoffs, reviews, snapshots]);
+  }, [board, reviews]);
 
   const selectedTile = tiles.find((tile) => tile.patient.id === selectedPatientId) ?? null;
 
@@ -75,6 +99,31 @@ export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow }: Shi
     }));
   }
 
+  async function refreshHandoff(patientId: string) {
+    setRefreshingPatientId(patientId);
+    setRefreshError(null);
+    try {
+      const response = await fetch("/api/handoffs/candidates", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ patientId }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok || typeof payload !== "object" || payload === null || !("id" in payload)) {
+        const message = typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "string"
+          ? payload.error : "Candidate generation failed. The previous handoff remains unchanged.";
+        throw new Error(message);
+      }
+      setBoard((current) => applyCandidateVersion(current, payload as HandoffVersion));
+    } catch (error) {
+      setRefreshError(error instanceof Error ? error.message : "Candidate generation failed. The previous handoff remains unchanged.");
+    } finally {
+      setRefreshingPatientId(null);
+    }
+  }
+
+  const staleCount = tiles.filter((tile) => tile.stale).length;
+
   return (
     <main className="board-shell">
       <header className="board-header">
@@ -82,6 +131,7 @@ export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow }: Shi
           <p className="eyebrow">SYNTHETIC DATA ONLY · DEMO UNIT</p>
           <h1>Shift Handoff Board</h1>
           <p className="header-copy">Prioritized handoffs with source-linked SBAR evidence. This is decision support, not clinical direction.</p>
+          <p className={`source-state source-${sourceStatus}`} role="status">{sourceStatus === "live" ? "Live synthetic source events connected" : sourceStatus === "connecting" ? "Connecting to live synthetic source events…" : sourceStatus === "error" ? "Live source connection unavailable" : "Local synthetic fixture mode"}</p>
         </div>
         <label className="nurse-select">
           <span>Reviewing nurse</span>
@@ -90,6 +140,10 @@ export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow }: Shi
           </select>
         </label>
       </header>
+
+      {sourceMessage && <p className="source-banner source-banner-warning" role="status">{sourceMessage}</p>}
+      {staleCount > 0 && <p className="source-banner source-banner-stale" role="status" aria-live="polite">{staleCount} handoff{staleCount === 1 ? " has" : "s have"} newer source data. Refresh each affected handoff to create a candidate version.</p>}
+      {refreshError && <p className="source-banner source-banner-error" role="alert">{refreshError}</p>}
 
       <section aria-labelledby="board-heading">
         <div className="section-heading">
@@ -101,7 +155,7 @@ export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow }: Shi
         </div>
         <div className="tile-grid">
           {tiles.map((tile) => (
-            <PatientTile key={tile.patient.id} tile={tile} demoNow={demoNow} onOpen={() => setSelectedPatientId(tile.patient.id)} />
+            <PatientTile key={tile.patient.id} tile={tile} demoNow={board.evaluatedAt} onOpen={() => setSelectedPatientId(tile.patient.id)} />
           ))}
         </div>
       </section>
@@ -109,20 +163,23 @@ export function ShiftBoard({ snapshots, events, handoffs, nurses, demoNow }: Shi
       {selectedTile && (
         <SbarDrawer
           tile={selectedTile}
-          events={events.filter((event) => event.patientId === selectedTile.patient.id)}
-          demoNow={demoNow}
+          events={board.events.filter((event) => event.patientId === selectedTile.patient.id)}
+          demoNow={board.evaluatedAt}
           selectedNurse={selectedNurse}
           draftNote={draftNote}
           onDraftNoteChange={setDraftNote}
           onSaveReview={saveReview}
           onClose={() => setSelectedPatientId(null)}
+          onRefresh={() => refreshHandoff(selectedTile.patient.id)}
+          isRefreshing={refreshingPatientId === selectedTile.patient.id}
+          canRefresh={boardMode !== "degraded"}
         />
       )}
     </main>
   );
 }
 
-function PatientTile({ tile, demoNow, onOpen }: { tile: BoardTile; demoNow: string; onOpen: () => void }) {
+function PatientTile({ tile, demoNow, onOpen }: { tile: BoardTile & { stale: boolean }; demoNow: string; onOpen: () => void }) {
   const status = coverageStatus(tile);
   const statusText = statusCopy(status);
   const strongestAlert = tile.alerts.find((alert) => alert.priority === "overdue") ?? tile.alerts[0];
@@ -136,6 +193,7 @@ function PatientTile({ tile, demoNow, onOpen }: { tile: BoardTile; demoNow: stri
       </div>
       <h3>{tile.patient.displayName}</h3>
       <p className="tile-meta">Assigned to Jamie Rivera, RN</p>
+      {tile.stale && <p className="stale-chip" role="status">New source data · refresh required</p>}
       {strongestAlert ? (
         <p className={`action-alert ${strongestAlert.priority === "overdue" ? "is-overdue" : ""}`}>{alertLabel(strongestAlert, demoNow)}</p>
       ) : <p className="no-actions">No due or overdue demo items</p>}
@@ -148,7 +206,7 @@ function PatientTile({ tile, demoNow, onOpen }: { tile: BoardTile; demoNow: stri
 }
 
 type DrawerProps = {
-  tile: BoardTile;
+  tile: BoardTile & { stale: boolean };
   events: ChartEvent[];
   demoNow: string;
   selectedNurse: DemoNurse | undefined;
@@ -156,9 +214,12 @@ type DrawerProps = {
   onDraftNoteChange: (note: string) => void;
   onSaveReview: () => void;
   onClose: () => void;
+  onRefresh: () => void;
+  isRefreshing: boolean;
+  canRefresh: boolean;
 };
 
-function SbarDrawer({ tile, events, demoNow, selectedNurse, draftNote, onDraftNoteChange, onSaveReview, onClose }: DrawerProps) {
+function SbarDrawer({ tile, events, demoNow, selectedNurse, draftNote, onDraftNoteChange, onSaveReview, onClose, onRefresh, isRefreshing, canRefresh }: DrawerProps) {
   const claimsBySection = Object.keys(sectionLabels).map((section) => ({
     section: section as keyof typeof sectionLabels,
     claims: tile.handoff.claims.filter((claim) => claim.section === section),
@@ -171,7 +232,7 @@ function SbarDrawer({ tile, events, demoNow, selectedNurse, draftNote, onDraftNo
       <aside className="sbar-drawer" role="dialog" aria-modal="true" aria-labelledby="handoff-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="drawer-header">
           <div>
-            <p className="eyebrow">ROOM {tile.patient.room} · HANDOFF v{tile.handoff.versionNumber}</p>
+            <p className="eyebrow">ROOM {tile.patient.room} · {tile.handoff.status === "candidate" ? "CANDIDATE" : "HANDOFF"} v{tile.handoff.versionNumber}</p>
             <h2 id="handoff-title">{tile.patient.displayName}</h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close handoff">×</button>
@@ -181,6 +242,11 @@ function SbarDrawer({ tile, events, demoNow, selectedNurse, draftNote, onDraftNo
           <span aria-hidden="true">{statusText.icon}</span>
           <div><strong>{statusText.label}</strong><p>Color reflects evidence coverage and data freshness, not patient acuity.</p></div>
         </div>
+
+        {tile.stale && <section className="stale-panel" aria-label="Handoff needs refresh"><strong>New source data is available.</strong><p>The displayed version is unchanged. Create a candidate only after explicitly refreshing.</p></section>}
+        {tile.handoff.status === "candidate" && <section className="candidate-panel" aria-label="Candidate version"><strong>Candidate version</strong><p>This immutable candidate was created by an explicit refresh and is not auto-published.</p></section>}
+
+        <div className="refresh-row"><button className="refresh-button" type="button" onClick={onRefresh} disabled={!canRefresh || isRefreshing}>{isRefreshing ? "Creating candidate…" : "Refresh handoff"}</button><p>{canRefresh ? "Creates a new candidate from currently available synthetic source events." : "Refresh is unavailable while Supabase is disconnected."}</p></div>
 
         {tile.alerts.length > 0 && <section className="drawer-section" aria-labelledby="upcoming-heading"><h3 id="upcoming-heading">Upcoming items</h3><ul className="alert-list">{tile.alerts.map((alert) => <li key={alert.id} className={alert.priority === "overdue" ? "is-overdue" : ""}>{alertLabel(alert, demoNow)}</li>)}</ul></section>}
 

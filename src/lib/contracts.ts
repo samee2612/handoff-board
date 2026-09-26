@@ -172,7 +172,7 @@ export const handoffVersionSchema = z
     sourceEventCutoff: isoDateTime,
     generatedAt: isoDateTime,
     model: z.string().min(1),
-    status: z.enum(["published", "failed"]),
+    status: z.enum(["candidate", "published", "failed"]),
     claims: z.array(handoffClaimSchema),
     excludedClaims: z.array(
       z.object({ claim: handoffClaimSchema, reason: z.string().min(1) }).strict(),
@@ -182,8 +182,8 @@ export const handoffVersionSchema = z
   })
   .strict()
   .superRefine((version, context) => {
-    if (version.status === "published" && version.failure !== null) {
-      context.addIssue({ code: "custom", message: "Published versions cannot contain a failure." });
+    if ((version.status === "published" || version.status === "candidate") && version.failure !== null) {
+      context.addIssue({ code: "custom", message: "Non-failed versions cannot contain a failure." });
     }
     if (version.status === "failed" && version.failure === null) {
       context.addIssue({ code: "custom", message: "Failed versions must contain a failure." });

@@ -12,10 +12,19 @@ h1 { color: #0c2746; font-size: clamp(2rem, 4vw, 3.4rem); letter-spacing: -.055e
 h2 { color: #112c4b; font-size: 1.45rem; letter-spacing: -.03em; margin-bottom: 0; }
 h3 { color: #102d4c; font-size: 1.08rem; line-height: 1.3; margin-bottom: 9px; }
 .header-copy { color: #506176; font-size: 1rem; line-height: 1.55; margin: 0; max-width: 610px; }
+.source-state { font-size: .78rem; font-weight: 750; margin: 12px 0 0; }
+.source-live { color: #08755a; }
+.source-connecting { color: #74500a; }
+.source-error { color: #a92c38; }
+.source-fixture { color: #52657b; }
 .nurse-select { color: #52657b; display: grid; font-size: .78rem; font-weight: 750; gap: 7px; min-width: 242px; }
 .nurse-select select { background: #fff; border: 1px solid #bac8d7; border-radius: 10px; color: #132942; padding: 11px 12px; }
 .section-heading { align-items: end; margin-bottom: 19px; }
 .priority-key { color: #607086; font-size: .82rem; margin: 0; text-align: right; }
+.source-banner { border-radius: 9px; font-size: .84rem; font-weight: 650; line-height: 1.4; margin: 0 0 20px; padding: 11px 13px; }
+.source-banner-warning { background: #fff5df; color: #805400; }
+.source-banner-stale { background: #edf4ff; border: 1px solid #b9d4f4; color: #174b86; }
+.source-banner-error { background: #feeaec; border: 1px solid #f2b8bf; color: #982631; }
 .tile-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
 .patient-tile { background: #fff; border: 1px solid #dce5ef; border-top: 5px solid #a0aec0; border-radius: 15px; box-shadow: 0 6px 18px rgb(25 45 75 / 5%); display: flex; flex-direction: column; min-height: 242px; padding: 20px; }
 .patient-tile.coverage-green { border-top-color: #0f9b77; }
@@ -27,6 +36,7 @@ h3 { color: #102d4c; font-size: 1.08rem; line-height: 1.3; margin-bottom: 9px; }
 .coverage-badge.coverage-amber { background: #fff5df; color: #9b6500; }
 .coverage-badge.coverage-red { background: #feeaec; color: #a92c38; }
 .tile-meta, .no-actions { color: #657589; font-size: .84rem; margin-bottom: 18px; }
+.stale-chip { background: #edf4ff; border-left: 3px solid #377bc9; color: #174b86; font-size: .75rem; font-weight: 800; margin: -6px 0 14px; padding: 6px 8px; }
 .action-alert { background: #edf4ff; border-radius: 8px; color: #174b86; font-size: .82rem; font-weight: 700; line-height: 1.35; margin: 0 0 20px; padding: 9px 10px; }
 .action-alert.is-overdue { background: #feeaec; color: #a92c38; }
 .tile-bottom { align-items: center; margin-top: auto; }
@@ -45,6 +55,16 @@ h3 { color: #102d4c; font-size: 1.08rem; line-height: 1.3; margin-bottom: 9px; }
 .status-panel.coverage-red { background: #feeaec; color: #982631; }
 .status-panel > span { font-size: 1.1rem; font-weight: 900; }
 .status-panel p, .review-form-heading p { font-size: .8rem; line-height: 1.4; margin: 3px 0 0; }
+.stale-panel, .candidate-panel { border-radius: 9px; margin: 0 0 16px; padding: 12px; }
+.stale-panel { background: #edf4ff; border: 1px solid #b9d4f4; color: #174b86; }
+.candidate-panel { background: #f1f7f4; border: 1px solid #b9dbc9; color: #12654f; }
+.stale-panel strong, .candidate-panel strong { font-size: .86rem; }
+.stale-panel p, .candidate-panel p { font-size: .8rem; line-height: 1.4; margin: 4px 0 0; }
+.refresh-row { align-items: center; border-bottom: 1px solid #e1e8f0; display: flex; gap: 12px; justify-content: space-between; margin: 0 0 21px; padding: 0 0 19px; }
+.refresh-row p { color: #607086; font-size: .76rem; line-height: 1.35; margin: 0; max-width: 300px; }
+.refresh-button { background: #eaf2fc; border: 1px solid #8eb8e8; border-radius: 8px; color: #0c4e96; cursor: pointer; flex: 0 0 auto; font-size: .82rem; font-weight: 800; padding: 9px 11px; }
+.refresh-button:hover { background: #dbeafe; }
+.refresh-button:disabled { cursor: not-allowed; opacity: .55; }
 .drawer-section { border-bottom: 1px solid #e1e8f0; padding: 2px 0 21px; margin-bottom: 21px; }
 .drawer-section h3, .review-form h3 { font-size: .94rem; margin-bottom: 10px; }
 .alert-list { display: grid; gap: 7px; list-style: none; margin: 0; padding: 0; }

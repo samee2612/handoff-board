@@ -15,12 +15,17 @@ OpenAI key. Run `npm run typecheck`, `npm test`, and `npm run build` before chan
 
 ## Optional Supabase setup
 
-Create a Supabase project, copy `.env.example` to `.env.local`, and add the project URL plus
-anon key. Apply `supabase/migrations/202609260001_foundation.sql`, then run
-`supabase/seed.sql` against that project. The Step 1 screen deliberately remains fixture-backed;
-it does not yet read or write Supabase. All tables have RLS enabled and no browser policies, so
-an anonymous browser cannot access the synthetic records. A later server-side data adapter and
-authenticated access design are required before the board can use persisted data.
+Create a Supabase project, copy `.env.example` to `.env.local`, and add the project URL, anon
+key, and the **server-only** service-role key. Apply both migrations in order, then run
+`supabase/seed.sql` against that project. Step 4 uses the service key only on the Next.js server
+to load and persist synthetic candidates. It never reaches the browser.
+
+Step 4 enables a browser Realtime subscription only for inserted rows in
+`patient_chart_events`. A new event updates deterministic tile alerts/freshness and marks the
+existing handoff stale; it never invokes an LLM or publishes a handoff automatically. The nurse
+must select **Refresh handoff** to create an immutable `candidate` version. Candidate versions are
+not auto-published. The demo's public Supabase read policies are deliberately restricted to rows
+whose patient is marked `is_synthetic = true`; do not reuse them for real clinical data.
 
 ## Model selection
 
@@ -30,3 +35,7 @@ pipeline stage.
 
 The OpenAI adapter sets response storage to false and must only receive synthetic records in
 this demo. It records structured agent diagnostics and evidence IDs, not hidden model reasoning.
+
+Explicit board refreshes remain deterministic and cost-free in this unauthenticated synthetic demo.
+The server-only OpenAI pipeline is available for deliberate evaluation code paths, but is not
+reachable from the public refresh endpoint until an authenticated authorization design exists.

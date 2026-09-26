@@ -14,7 +14,7 @@ export function tilePriority(tile: BoardTile): number {
   return 5;
 }
 
-export function sortBoardTiles(tiles: BoardTile[]): BoardTile[] {
+export function sortBoardTiles<T extends BoardTile>(tiles: T[]): T[] {
   return [...tiles].sort((left, right) =>
     tilePriority(left) - tilePriority(right) || left.patient.room.localeCompare(right.patient.room),
   );

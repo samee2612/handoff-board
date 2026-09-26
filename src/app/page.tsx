@@ -1,17 +1,19 @@
-import { createDemoUnit } from "@/lib/demo/seed-data";
-import { buildFoundationSnapshot } from "@/lib/engine/board";
-import { HandoffPipeline } from "@/lib/handoff/pipeline";
+import { connection } from "next/server";
 import { ShiftBoard } from "@/components/shift-board";
+import { loadBoard } from "@/lib/supabase/board-data";
 
 export default async function Home() {
-  const demo = createDemoUnit();
-  const board = buildFoundationSnapshot(demo);
-  const pipeline = new HandoffPipeline();
-  const handoffs = await Promise.all(board.patients.map((snapshot) => pipeline.generate(
-    snapshot.patient,
-    demo.chartEvents.filter((event) => event.patientId === snapshot.patient.id),
-    demo.now,
-  )));
+  // Supabase credentials and source records are evaluated per request, never at build time.
+  await connection();
+  const board = await loadBoard();
 
-  return <ShiftBoard snapshots={board.patients} events={demo.chartEvents} handoffs={handoffs} nurses={demo.nurses} demoNow={demo.now.toISOString()} />;
+  return <ShiftBoard
+    snapshots={board.snapshots}
+    events={board.events}
+    handoffs={board.handoffs}
+    nurses={board.nurses}
+    demoNow={board.evaluatedAt}
+    boardMode={board.mode}
+    sourceMessage={board.sourceMessage}
+  />;
 }
