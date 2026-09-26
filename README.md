@@ -3,6 +3,11 @@
 Step 1 provides a synthetic-data-only Next.js foundation, typed chart-event contracts, a
 deterministic upcoming-item/freshness engine, and Supabase schema plus seed files.
 
+Step 2 adds a typed, fail-closed multi-agent handoff pipeline. The default local pipeline uses
+deterministic fixture specialists; `createOpenAiHandoffPipeline()` explicitly creates the
+server-only OpenAI Structured Outputs variant from `OPENAI_API_KEY`. Medication timing, PRN eligibility, task timing, and freshness are
+always computed by the deterministic engine—not by the model.
+
 ## Local use
 
 Run `npm run dev` to view the fixture-backed foundation. It does not require Supabase or an
@@ -22,3 +27,6 @@ authenticated access design are required before the board can use persisted data
 `OPENAI_MODEL` defaults to `gpt-5-mini`, so development and tests do not default to Astra.
 Set it to `gpt-6-astra` only for a deliberate high-capability evaluation in the later agent
 pipeline stage.
+
+The OpenAI adapter sets response storage to false and must only receive synthetic records in
+this demo. It records structured agent diagnostics and evidence IDs, not hidden model reasoning.

@@ -20,6 +20,7 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
     {
       id: IDs.ava,
       unitId: IDs.unit,
+      isSynthetic: true,
       displayName: "Ava Miller (fictional)",
       room: "401-A",
       assignedNurseId: IDs.nurse,
@@ -28,6 +29,7 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
     {
       id: IDs.ben,
       unitId: IDs.unit,
+      isSynthetic: true,
       displayName: "Ben Carter (fictional)",
       room: "401-B",
       assignedNurseId: IDs.nurse,
@@ -36,6 +38,7 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
     {
       id: IDs.clara,
       unitId: IDs.unit,
+      isSynthetic: true,
       displayName: "Clara Reed (fictional)",
       room: "402-A",
       assignedNurseId: IDs.nurse,

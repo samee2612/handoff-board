@@ -15,6 +15,7 @@ export type ChartEventCategory = z.infer<typeof chartEventCategorySchema>;
 export const patientSchema = z.object({
   id: z.string().uuid(),
   unitId: z.string().uuid(),
+  isSynthetic: z.literal(true),
   displayName: z.string().min(1),
   room: z.string().min(1),
   assignedNurseId: z.string().uuid(),
@@ -106,3 +107,86 @@ export type FreshnessEvaluation = {
   staleCategories: ChartEventCategory[];
   evaluatedAt: string;
 };
+
+export const specialistNameSchema = z.enum(["chart_vitals", "medications", "tasks_incidents"]);
+export type SpecialistName = z.infer<typeof specialistNameSchema>;
+
+export const extractedFactSchema = z
+  .object({
+    id: z.string().min(1),
+    specialist: specialistNameSchema,
+    summary: z.string().min(1),
+    evidenceEventIds: z.array(z.string().uuid()).min(1),
+  })
+  .strict();
+export type ExtractedFact = z.infer<typeof extractedFactSchema>;
+
+export const sbarSectionSchema = z.enum(["situation", "background", "assessment", "recommendation"]);
+export type SbarSection = z.infer<typeof sbarSectionSchema>;
+
+export const handoffClaimSchema = z
+  .object({
+    id: z.string().min(1),
+    section: sbarSectionSchema,
+    text: z.string().min(1),
+    evidenceEventIds: z.array(z.string().uuid()).min(1),
+  })
+  .strict();
+export type HandoffClaim = z.infer<typeof handoffClaimSchema>;
+
+export const verificationDecisionSchema = z
+  .object({
+    claimId: z.string().min(1),
+    status: z.enum(["supported", "gap"]),
+    reason: z.string().min(1),
+  })
+  .strict();
+export type VerificationDecision = z.infer<typeof verificationDecisionSchema>;
+
+export const agentDiagnosticSchema = z
+  .object({
+    runId: z.string().uuid(),
+    agent: z.enum(["chart_vitals", "medications", "tasks_incidents", "sbar_synthesizer", "evidence_verifier"]),
+    status: z.enum(["succeeded", "failed"]),
+    model: z.string().min(1),
+    startedAt: isoDateTime,
+    completedAt: isoDateTime,
+    inputEventCount: z.number().int().nonnegative(),
+    outputCount: z.number().int().nonnegative(),
+    errorCode: z.string().optional(),
+    errorMessage: z.string().optional(),
+  })
+  .strict();
+export type AgentDiagnostic = z.infer<typeof agentDiagnosticSchema>;
+
+export const handoffFailureSchema = z
+  .object({ code: z.string().min(1), message: z.string().min(1) })
+  .strict();
+export type HandoffFailure = z.infer<typeof handoffFailureSchema>;
+
+export const handoffVersionSchema = z
+  .object({
+    id: z.string().uuid(),
+    versionNumber: z.number().int().positive(),
+    patientId: z.string().uuid(),
+    sourceEventCutoff: isoDateTime,
+    generatedAt: isoDateTime,
+    model: z.string().min(1),
+    status: z.enum(["published", "failed"]),
+    claims: z.array(handoffClaimSchema),
+    excludedClaims: z.array(
+      z.object({ claim: handoffClaimSchema, reason: z.string().min(1) }).strict(),
+    ),
+    diagnostics: z.array(agentDiagnosticSchema),
+    failure: handoffFailureSchema.nullable(),
+  })
+  .strict()
+  .superRefine((version, context) => {
+    if (version.status === "published" && version.failure !== null) {
+      context.addIssue({ code: "custom", message: "Published versions cannot contain a failure." });
+    }
+    if (version.status === "failed" && version.failure === null) {
+      context.addIssue({ code: "custom", message: "Failed versions must contain a failure." });
+    }
+  });
+export type HandoffVersion = z.infer<typeof handoffVersionSchema>;
