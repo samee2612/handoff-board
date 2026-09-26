@@ -8,7 +8,8 @@ const IDs = {
   clara: "55555555-5555-4555-8555-555555555555",
 };
 
-export type DemoUnit = { now: Date; patients: Patient[]; chartEvents: ChartEvent[] };
+export type DemoNurse = { id: string; displayName: string };
+export type DemoUnit = { now: Date; patients: Patient[]; chartEvents: ChartEvent[]; nurses: DemoNurse[] };
 
 const iso = (date: Date) => date.toISOString();
 const minutesBefore = (now: Date, minutes: number) => new Date(now.getTime() - minutes * 60_000);
@@ -16,6 +17,10 @@ const minutesAfter = (now: Date, minutes: number) => new Date(now.getTime() + mi
 
 /** Creates repeatable fictional data relative to a controllable demo clock. */
 export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): DemoUnit {
+  const nurses: DemoNurse[] = [
+    { id: IDs.nurse, displayName: "Jamie Rivera, RN (fictional)" },
+    { id: "66666666-6666-4666-8666-666666666666", displayName: "Morgan Lee, RN (fictional)" },
+  ];
   const patients: Patient[] = [
     {
       id: IDs.ava,
@@ -154,5 +159,5 @@ export function createDemoUnit(now = new Date("2026-09-26T19:00:00.000Z")): Demo
     }),
   ];
 
-  return { now, patients, chartEvents };
+  return { now, patients, chartEvents, nurses };
 }
