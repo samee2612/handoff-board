@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { SyntheticDemoNotice } from "@/components/synthetic-demo-notice";
 
 export const metadata: Metadata = {
-  title: "Handoff Board",
-  description: "Synthetic nursing shift handoff demonstration",
+  title: "Synthetic Handoff Board Demo",
+  description: "Synthetic-only nursing shift handoff demonstration. Not for clinical use.",
+  robots: { index: false, follow: false, nocache: true },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <SyntheticDemoNotice />
+        {children}
+      </body>
     </html>
   );
 }

@@ -1,10 +1,12 @@
 import { connection } from "next/server";
 import { ShiftBoard } from "@/components/shift-board";
+import { assertSyntheticOnlyDeployment } from "@/lib/config/deployment";
 import { loadBoard } from "@/lib/supabase/board-data";
 
 export default async function Home() {
   // Supabase credentials and source records are evaluated per request, never at build time.
   await connection();
+  assertSyntheticOnlyDeployment();
   const board = await loadBoard();
 
   return <ShiftBoard

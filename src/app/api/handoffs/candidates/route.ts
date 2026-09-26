@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
+import { assertSyntheticOnlyDeployment, UnsafeDeploymentConfigurationError } from "@/lib/config/deployment";
 import { CandidateRefreshError, candidateRefreshRequestSchema, createCandidateVersion } from "@/lib/handoff/candidates";
 
 export async function POST(request: Request) {
+  try {
+    assertSyntheticOnlyDeployment();
+  } catch (error) {
+    if (error instanceof UnsafeDeploymentConfigurationError) {
+      return NextResponse.json({ error: "This hosted demo is not configured for synthetic-only operation." }, { status: 503 });
+    }
+    throw error;
+  }
   const parsed = candidateRefreshRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "A valid synthetic patient ID is required." }, { status: 400 });
   try {
