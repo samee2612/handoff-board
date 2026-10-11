@@ -1,9 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { loadEnvConfig } from "@next/env";
 import { GeminiProtocolEmbedder } from "../src/lib/handoff/gemini-embeddings";
+
+const { loadEnvConfig } = createRequire(import.meta.url)("@next/env") as typeof import("@next/env");
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -21,7 +23,7 @@ function splitIntoChunks(markdown: string): string[] {
 }
 
 async function ingestProtocols(): Promise<void> {
-  loadEnvConfig(process.cwd());
+  loadEnvConfig(process.cwd(), true);
   const projectUrl = requiredEnvironment("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY");
   requiredEnvironment("GOOGLE_API_KEY");
