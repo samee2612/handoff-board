@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ChartEvent, VitalType } from "@/lib/contracts";
 import { vitalTypeSchema } from "@/lib/contracts";
-import { persistCandidateVersion, CandidateRefreshError } from "@/lib/handoff/candidates";
+import { CandidateRefreshError, createCandidateVersion } from "@/lib/handoff/candidates";
+import { getHandoffCheckpointer } from "@/lib/handoff/checkpointer";
 import { createOptionalSupabaseServiceClient } from "@/lib/supabase/server-client";
 import { loadSyntheticPatientAndEvents, loadSyntheticVitalMonitoringPlans } from "@/lib/supabase/board-data";
 import { createVitalHandoffCandidate } from "@/lib/vitals/handoff";
@@ -62,6 +63,16 @@ export async function recordSyntheticVital(input: VitalRecordingInput) {
   if (!plans.some((plan) => plan.vitalType === input.vitalType)) {
     throw new VitalRecordingError("PLAN_REQUIRED", "This patient has no synthetic monitoring plan for that vital.");
   }
+  if (client) {
+    try {
+      await getHandoffCheckpointer();
+    } catch (error) {
+      throw new VitalRecordingError(
+        "SETUP_REQUIRED",
+        error instanceof Error ? error.message : "Persistent graph checkpointing is not configured.",
+      );
+    }
+  }
 
   const now = input.recordedAt ? new Date(input.recordedAt) : new Date();
   const event: Extract<ChartEvent, { category: "vital" }> = {
@@ -86,17 +97,20 @@ export async function recordSyntheticVital(input: VitalRecordingInput) {
     if (error) throw new VitalRecordingError("PERSISTENCE_FAILED", "The synthetic vital could not be saved.");
   }
 
+  const generated = await createVitalHandoffCandidate({
+    patient: stored.patient,
+    events: [...stored.events, event],
+    plans,
+    recordedVital: event,
+    generatedAt: now,
+  });
   try {
-    const generated = await createVitalHandoffCandidate({
-      patient: stored.patient,
-      events: [...stored.events, event],
-      plans,
-      recordedVital: event,
-      generatedAt: now,
-    });
-    return { event, monitoring: generated.monitoring, candidate: client ? await persistCandidateVersion(generated.candidate) : generated.candidate };
+    const candidate = client ? await createCandidateVersion(input.patientId) : generated.candidate;
+    return { event, monitoring: generated.monitoring, candidate };
   } catch (error) {
-    if (error instanceof CandidateRefreshError) throw new VitalRecordingError("PERSISTENCE_FAILED", error.message);
+    if (error instanceof CandidateRefreshError) {
+      throw new VitalRecordingError(error.code === "SETUP_REQUIRED" ? "SETUP_REQUIRED" : "PERSISTENCE_FAILED", error.message);
+    }
     throw error;
   }
 }

@@ -122,6 +122,7 @@ describe("LangGraph handoff pipeline with offline fixtures", () => {
     expect(versions[0].status).toBe("candidate");
     expect(versions[0].claims.length).toBeGreaterThan(0);
     expect(versions[0].claims.every((claim) => claim.evidenceEventIds.length > 0)).toBe(true);
+    expect(await harness.data.getReviewThreadId(candidate.id)).not.toBeNull();
     expect(await harness.data.listPublications(harness.patient.id)).toHaveLength(0);
 
     const resumed = await harness.pipeline.resumeVersion(candidate.id, "approved");

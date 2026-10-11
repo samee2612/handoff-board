@@ -216,9 +216,11 @@ function codeCheckClaims(
   claims: HandoffClaim[],
   facts: ExtractedFact[],
   events: ChartEvent[],
+  protocolChunks: HandoffSynthesisContext["protocolChunks"],
 ): VerificationDecision[] {
   const factEventIds = new Set(facts.flatMap((fact) => fact.evidenceEventIds));
   const eventById = new Map(events.map((event) => [event.id, event]));
+  const protocolChunkIds = new Set(protocolChunks.map((chunk) => chunk.id));
 
   return claims.map((rawClaim) => {
     const claim = handoffClaimSchema.parse(rawClaim);
@@ -227,6 +229,16 @@ function codeCheckClaims(
         claimId: claim.id,
         status: "gap",
         reason: `Claim '${claim.id}' cites an event absent from specialist facts.`,
+      };
+    }
+
+    const missingProtocolChunk = (claim.evidenceProtocolChunkIds ?? [])
+      .find((id) => !protocolChunkIds.has(id));
+    if (missingProtocolChunk) {
+      return {
+        claimId: claim.id,
+        status: "gap",
+        reason: `Claim '${claim.id}' cites protocol chunk '${missingProtocolChunk}' absent from retrieved context.`,
       };
     }
 
@@ -457,14 +469,19 @@ export function buildHandoffGraph(
         return { decisions: [], supportedClaims: [], excludedClaims: [] };
       }
       // Deterministic evidence checks run before an LLM verifier is allowed to weigh in.
-      const codeDecisions = codeCheckClaims(state.claims, state.facts, state.events);
+      const codeDecisions = codeCheckClaims(state.claims, state.facts, state.events, state.protocolChunks);
       const result = await runAgent({
         state,
         agent: "evidence_verifier",
         model: dependencies.agents.verifier.model,
         inputEventCount: state.events.length,
         operation: async () => {
-          const raw = await dependencies.agents.verifier.verify(state.claims, state.facts, state.events);
+          const raw = await dependencies.agents.verifier.verify(
+            state.claims,
+            state.facts,
+            state.events,
+            state.protocolChunks,
+          );
           const decisions = raw.map((decision) => verificationDecisionSchema.parse(decision));
           const ids = new Set(decisions.map((decision) => decision.claimId));
           if (ids.size !== state.claims.length || state.claims.some((claim) => !ids.has(claim.id))) {
@@ -706,6 +723,9 @@ export class HandoffPipeline {
         result.failure?.message ?? "The graph ended without storing a handoff version.",
       );
     }
+    if (result.status === "awaiting_review") {
+      await this.data.registerReviewThread(result.versionId, initial.runId);
+    }
     this.runByVersionId.set(result.versionId, initial.runId);
     const version = await this.data.get(result.versionId);
     if (!version) throw new HandoffPipelineError("HANDOFF_VERSION_MISSING", "The graph stored no retrievable handoff version.");
@@ -752,8 +772,12 @@ export class HandoffPipeline {
     generatedAt?: Date;
     maxRetries?: number;
   }): Promise<HandoffGraphState> {
-    return this.graph.invoke(withStateDefaults({ ...input, runId }), {
+    const result = await this.graph.invoke(withStateDefaults({ ...input, runId }), {
       configurable: { thread_id: runId },
     });
+    if (result.status === "awaiting_review" && result.versionId) {
+      await this.data.registerReviewThread(result.versionId, runId);
+    }
+    return result;
   }
 }

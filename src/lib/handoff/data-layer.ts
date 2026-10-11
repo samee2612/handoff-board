@@ -13,7 +13,7 @@ export type ProtocolChunk = { id: string; text: string };
 export type HandoffVersionDraft = Omit<HandoffVersion, "id" | "versionNumber">;
 export type PublicationDraft = Omit<HandoffPublication, "id">;
 
-/** Reads synthetic patient context. Supabase can implement the same contract in Phase 2. */
+/** Reads synthetic patient context through fixture or server-side data sources. */
 export interface EventSource {
   getPatient(patientId: string): Promise<Patient | null>;
   getEvents(patientId: string): Promise<ChartEvent[]>;
@@ -34,6 +34,8 @@ export interface VersionStore {
   append(draft: HandoffVersionDraft): Promise<HandoffVersion>;
   get(versionId: string): Promise<HandoffVersion | null>;
   list(patientId: string): Promise<HandoffVersion[]>;
+  registerReviewThread(versionId: string, threadId: string): Promise<void>;
+  getReviewThreadId(versionId: string): Promise<string | null>;
 }
 
 /** Appends publication events separately from immutable versions. */
@@ -71,6 +73,7 @@ export class InMemoryHandoffDataLayer implements HandoffDataLayer {
   private readonly plans: VitalMonitoringPlan[];
   private readonly versions: HandoffVersion[] = [];
   private readonly publications: HandoffPublication[] = [];
+  private readonly reviewThreads = new Map<string, string>();
 
   constructor(unit: DemoUnit = createDemoUnit()) {
     for (const patient of unit.patients) this.patients.set(patient.id, copy(patient));
@@ -126,6 +129,18 @@ export class InMemoryHandoffDataLayer implements HandoffDataLayer {
 
   async list(patientId: string): Promise<HandoffVersion[]> {
     return copy(this.versions.filter((item) => item.patientId === patientId));
+  }
+
+  async registerReviewThread(versionId: string, threadId: string): Promise<void> {
+    const version = this.versions.find((item) => item.id === versionId);
+    if (!version || version.status !== "candidate" || this.reviewThreads.has(versionId)) {
+      throw new Error("A review thread can only be registered once for a stored candidate.");
+    }
+    this.reviewThreads.set(versionId, threadId);
+  }
+
+  async getReviewThreadId(versionId: string): Promise<string | null> {
+    return this.reviewThreads.get(versionId) ?? null;
   }
 
   async appendPublication(draft: PublicationDraft): Promise<HandoffPublication> {

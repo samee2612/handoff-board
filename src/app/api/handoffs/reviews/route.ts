@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { readDemoSession } from "@/lib/auth/demo-session";
 import { assertSyntheticOnlyDeployment, UnsafeDeploymentConfigurationError } from "@/lib/config/deployment";
-import { HandoffWorkflowError, handoffReviewRequestSchema, recordHandoffReview } from "@/lib/handoff/workflow";
+import { HandoffWorkflowError, handoffReviewRequestSchema, resumeHandoffReview } from "@/lib/handoff/workflow";
 
 export async function POST(request: Request) {
   try {
@@ -17,10 +17,11 @@ export async function POST(request: Request) {
   const parsed = handoffReviewRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Review details are invalid." }, { status: 400 });
   try {
-    return NextResponse.json(await recordHandoffReview(parsed.data, session.nurseId));
+    return NextResponse.json(await resumeHandoffReview(parsed.data, session.nurseId));
   } catch (error) {
     if (error instanceof HandoffWorkflowError) {
-      return NextResponse.json({ error: error.message }, { status: error.code === "SETUP_REQUIRED" ? 503 : 409 });
+      const status = error.code === "SETUP_REQUIRED" ? 503 : error.code === "NOT_FOUND" ? 404 : 409;
+      return NextResponse.json({ error: error.message }, { status });
     }
     return NextResponse.json({ error: "The review could not be saved." }, { status: 500 });
   }

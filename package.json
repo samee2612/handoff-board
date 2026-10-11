@@ -9,10 +9,13 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:graph": "vitest run src/lib/handoff/graph"
+    "test:graph": "vitest run src/lib/handoff/graph",
+    "ingest:protocols": "tsx scripts/ingest-protocols.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.28.0",
     "@langchain/langgraph": "^1.4.21",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.6",
     "@supabase/supabase-js": "^2.117.2",
     "next": "^16.3.6",
     "openai": "^7.23.0",
@@ -25,6 +28,7 @@
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "tsx": "^4.20.6",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   }

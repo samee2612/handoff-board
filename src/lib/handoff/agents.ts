@@ -34,6 +34,7 @@ const synthesisOutputSchema = z
           section: z.enum(["situation", "background", "assessment", "recommendation"]),
           text: z.string(),
           evidenceEventIds: z.array(eventRecordIdSchema),
+          evidenceProtocolChunkIds: z.array(z.string().min(1)).optional(),
         })
         .strict(),
     ),
@@ -191,6 +192,7 @@ export class SbarSynthesizer {
       instructions: [
         "Create a concise SBAR handoff from the supplied evidence-backed facts for a synthetic-data demo.",
         "Use only supplied facts and cite supplied event IDs on every claim.",
+        "When a claim relies on supplied protocol context, cite its protocol chunk IDs in evidenceProtocolChunkIds.",
         "Do not calculate due times, medication eligibility, priority, or freshness. Do not make clinical recommendations or add clinical knowledge.",
         "Deterministic attention tiers and due times are for context only; do not include or restate them in claim text.",
         "An empty section is preferable to an unsupported claim.",
@@ -219,7 +221,12 @@ export class EvidenceVerifier {
     this.model = client?.model ?? "deterministic-fixture";
   }
 
-  async verify(claims: HandoffClaim[], facts: ExtractedFact[], events: ChartEvent[]): Promise<VerificationDecision[]> {
+  async verify(
+    claims: HandoffClaim[],
+    facts: ExtractedFact[],
+    events: ChartEvent[],
+    protocolChunks: ProtocolChunk[] = [],
+  ): Promise<VerificationDecision[]> {
     const factEventIds = new Set(facts.flatMap((fact) => fact.evidenceEventIds));
     const eventById = new Map(events.map((event) => [event.id, event]));
     if (!this.client) {
@@ -238,9 +245,15 @@ export class EvidenceVerifier {
       instructions: [
         "Independently verify each proposed synthetic SBAR claim against the supplied specialist facts and source events.",
         "Mark supported only when the cited event IDs and supplied text directly support the claim. Otherwise mark gap.",
+        "If a claim relies on protocol context, verify that it cites the relevant supplied protocol chunk IDs.",
         "Do not create claims, alter citations, infer timing, or provide medical advice.",
       ].join(" "),
-      input: { claims, facts, events: promptEvents(events) },
+      input: {
+        claims,
+        facts,
+        events: promptEvents(events),
+        protocolChunks: protocolChunks.map(({ id, text }) => ({ id, text })),
+      },
     });
 
     const decisions = new Map(output.decisions.map((decision) => [decision.claimId, decision]));

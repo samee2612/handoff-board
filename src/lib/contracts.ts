@@ -165,6 +165,7 @@ export const handoffClaimSchema = z
     section: sbarSectionSchema,
     text: z.string().min(1),
     evidenceEventIds: z.array(eventRecordIdSchema).min(1),
+    evidenceProtocolChunkIds: z.array(z.string().min(1)).optional(),
   })
   .strict();
 export type HandoffClaim = z.infer<typeof handoffClaimSchema>;

@@ -49,25 +49,47 @@ START -> load_context -> deterministic_engine -> retrieve_protocols
 ```
 
 `src/lib/handoff/data-layer.ts` defines the event, monitoring-plan, knowledge, version, and
-publication ports. Phase 1 supplies an in-memory implementation; database-backed sources and the
-review API are a later phase. The server-only OpenAI adapter is opt-in through
+publication ports. The workflow supports in-memory fixtures and server-only Supabase data sources.
+The server-only OpenAI adapter is opt-in through
 `createOpenAiHandoffPipeline()` and `OPENAI_API_KEY`; tests use fixture agents only.
 
 See [docs/handoff-graph.md](./docs/handoff-graph.md) for the detailed graph state, node,
 checkpointing, and testing guide.
 
+## Protocol context (Phase 3)
+
+The graph can retrieve up to three synthetic formatting/boundary chunks from Supabase using
+Gemini `gemini-embedding-001` embeddings. Retrieved text is passed to synthesis and verification
+only; deterministic attention, trend, plausibility, and due-time rules never use protocol text.
+Claims that cite protocol context must name retrieved chunk IDs, and code rejects unknown chunk
+IDs in addition to checking source-event evidence.
+
+Apply `supabase/migrations/202610120001_protocol_knowledge_chunks.sql`, then set the server-only
+`GOOGLE_API_KEY` and run `npm run ingest:protocols` to embed the Markdown files in
+`data/protocols/`. Fixture mode and automated tests continue to use fixed in-memory chunks without
+an API key or network access.
+
 ## Optional Supabase setup
 
 Create a Supabase project, copy `.env.example` to `.env.local`, and add the project URL, anon key,
-the **server-only** service-role key, and a long random `DEMO_SESSION_SECRET`. Apply all migrations
-in order, then run `supabase/seed.sql` against that project. The service key must never reach the
-browser.
+the **server-only** service-role key, a direct Postgres connection string as `SUPABASE_DB_URL`,
+and a long random `DEMO_SESSION_SECRET`. Apply all migrations in order, then run
+`supabase/seed.sql` against that project. The service key, database connection string, and session
+secret must never reach the browser.
 
 The shared workflow requires this Supabase setup. A selected fictional nurse receives a signed,
 HTTP-only demo session; review notes, approvals, rejections, publications, and audit events are
 written by server-only database functions. Candidate versions stay immutable. Publishing appends a
 publication event, so the current published handoff is determined by the latest publication
 rather than by the highest version number.
+
+The LangGraph workflow stores checkpoint state in Postgres so a candidate can remain paused for
+review across server restarts. The review API accepts only `approved` or `rejected`; approval
+resumes the graph and appends the publication record. The older standalone publish endpoint no
+longer publishes candidates.
+
+Migration `202610110001_langgraph_review_threads.sql` adds the private candidate-to-checkpoint
+mapping. The LangGraph Postgres saver initializes its checkpoint tables on first server use.
 
 The vital-monitoring demo adds a patient-specific synthetic monitoring plan for BP, heart rate,
 temperature, oxygen saturation, or blood glucose. When a fictional nurse records a new vital, the
@@ -109,8 +131,10 @@ CLI—never in source control.
    | `NEXT_PUBLIC_SUPABASE_URL` | Public | Synthetic Supabase project URL. |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public | Browser Realtime connection for synthetic source events. |
    | `SUPABASE_SERVICE_ROLE_KEY` | Secret | Server-only synthetic candidate persistence. Never prefix this with `NEXT_PUBLIC_`. |
+   | `SUPABASE_DB_URL` | Secret | Server-only Postgres connection for durable LangGraph checkpoints. |
    | `DEMO_SESSION_SECRET` | Secret | Long random value used to sign controlled fictional-nurse sessions. |
    | `OPENAI_API_KEY` | Secret | Optional offline pipeline evaluation only; the public refresh route cannot call it. |
+   | `GOOGLE_API_KEY` | Secret | Gemini protocol embeddings for live Supabase retrieval and ingestion only. |
 
 4. Deploy from `main`. GitHub Actions verifies type checks, tests, and a production build before
    the commit is considered ready. Vercel's Git integration can then create Preview deployments

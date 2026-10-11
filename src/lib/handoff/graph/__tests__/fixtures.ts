@@ -121,6 +121,7 @@ class FixtureDataLayer extends InMemoryHandoffDataLayer {
     patient: Patient,
     events: ChartEvent[],
     private readonly plan: VitalMonitoringPlan,
+    private readonly protocolChunks?: Array<{ id: string; text: string }>,
   ) {
     super();
     this.setPatientEvents(patient, events);
@@ -130,6 +131,11 @@ class FixtureDataLayer extends InMemoryHandoffDataLayer {
     return patientId === this.plan.patientId && triggerEventId === "evt-901"
       ? structuredClone(this.plan)
       : null;
+  }
+
+  override async retrieve(_query: string, limit: number) {
+    if (!this.protocolChunks) return super.retrieve(_query, limit);
+    return structuredClone(this.protocolChunks.slice(0, Math.min(3, Math.max(0, limit))));
   }
 }
 
@@ -189,12 +195,13 @@ export function makeGraph(options: {
   patient?: Patient;
   events?: ChartEvent[];
   plan?: VitalMonitoringPlan;
+  protocolChunks?: Array<{ id: string; text: string }>;
   maxRetries?: number;
 } = {}) {
   const patient = options.patient ?? makePatient();
   const events = options.events ?? makeChartEvents(patient.id);
   const plan = options.plan ?? makeMonitoringPlan(patient.id);
-  const data = new FixtureDataLayer(patient, events, plan);
+  const data = new FixtureDataLayer(patient, events, plan, options.protocolChunks);
   const llm = new ScriptedLlm(defaultResponse);
   const checkpointer = new MemorySaver();
   const graph = buildHandoffGraph(
@@ -244,11 +251,15 @@ export function makeClaim(input: {
   id?: string;
   text: string;
   evidenceEventIds: string[];
+  evidenceProtocolChunkIds?: string[];
 }): HandoffClaim {
   return {
     id: input.id ?? "claim-scripted",
     section: "assessment",
     text: input.text,
     evidenceEventIds: input.evidenceEventIds,
+    ...(input.evidenceProtocolChunkIds
+      ? { evidenceProtocolChunkIds: input.evidenceProtocolChunkIds }
+      : {}),
   };
 }
