@@ -1,0 +1,26 @@
+{
+  "patient_id": "demo-patient-4",
+  "shift": "07:00-19:00 (synthetic)",
+  "entries": [
+    {"id": "m01", "time": "0700", "text": "Handover recvd from night. Pt post-op day 1, IV cannula L forearm"},
+    {"id": "m02", "time": "0800", "text": "BP 122/78 HR 84 pt comfortable, eating breakfast"},
+    {"id": "m03", "time": "0900", "text": "TASK: change IV cannula L forearm, due 1200"},
+    {"id": "m04", "time": "0915", "text": "bp 118/74"},
+    {"id": "m05", "time": "1000", "text": "pt c/o mild SOB on walking to bathroom, sats 96% RA"},
+    {"id": "m06", "time": "1100", "text": "BP 110/70 HR 88"},
+    {"id": "m07", "time": "1130", "text": "BM sugar 7.1 mmol/L pre-lunch"},
+    {"id": "m08", "time": "1200", "text": "cannula NOT changed yet, busy w/ obs"},
+    {"id": "m09", "time": "1300", "text": "Pain 6/10 incision site, paracetamol 1g PO given"},
+    {"id": "m10", "time": "1400", "text": "BP 104/66 pt a bit drowsy, metoprolol 25mg due, HELD"},
+    {"id": "m11", "time": "1430", "text": "fam visiting, asked re discharge timing"},
+    {"id": "m12", "time": "1500", "text": "BP 98/60 HR 96 pt says feels light headed"},
+    {"id": "m13", "time": "1530", "text": "pt walked to bathroom w/ assist, sats ok"},
+    {"id": "m14", "time": "1600", "text": "BP 88/54 dizzy when sat up, lying down now"},
+    {"id": "m15", "time": "1610", "text": "Dr Chen paged re low BP, will review 1800"},
+    {"id": "m16", "time": "1640", "text": "IV fluids 500ml bolus started per verbal order"},
+    {"id": "m17", "time": "1700", "text": "recheck BP before 5pm"},
+    {"id": "m18", "time": "1715", "text": "BP 1O4/6O (typo?) HR 102"},
+    {"id": "m19", "time": "1800", "text": "Dr Chen reviewed pt, no new orders documented yet"},
+    {"id": "m20", "time": "1845", "text": "bp 101/64 HR 98, awake, sats 97%"}
+  ]
+}
