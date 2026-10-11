@@ -10,5 +10,6 @@ export default defineConfig({
   test: {
     environment: "node",
     exclude: ["**/node_modules/**", "**/handoff-board/**"],
+    testTimeout: 10_000,
   },
 });

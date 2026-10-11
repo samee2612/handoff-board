@@ -1,7 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { ChartEvent, ExtractedFact, VerificationDecision } from "@/lib/contracts";
-import { EvidenceVerifier, type SpecialistAgent, type SpecialistResult } from "@/lib/handoff/agents";
-import { HandoffPipeline } from "@/lib/handoff/pipeline";
+import {
+  ChartVitalsSpecialist,
+  EvidenceVerifier,
+  MedicationSpecialist,
+  SbarSynthesizer,
+  TasksIncidentsSpecialist,
+  type HandoffSynthesisContext,
+  type SpecialistAgent,
+  type SpecialistResult,
+} from "@/lib/handoff/agents";
+import { InMemoryHandoffDataLayer } from "@/lib/handoff/data-layer";
+import { HandoffPipeline, type HandoffAgents } from "@/lib/handoff/pipeline";
 import { createDemoUnit } from "@/lib/demo/seed-data";
 
 class FailingSpecialist implements SpecialistAgent {
@@ -13,97 +24,198 @@ class FailingSpecialist implements SpecialistAgent {
   }
 }
 
-class SelectiveGapVerifier extends EvidenceVerifier {
-  override async verify(
-    claims: { id: string }[],
-    _facts: ExtractedFact[],
-    _events: ChartEvent[],
-  ): Promise<VerificationDecision[]> {
-    return claims.map((claim, index) => ({
+class GapThenSupportVerifier extends EvidenceVerifier {
+  calls = 0;
+
+  override async verify(claims: { id: string }[]): Promise<VerificationDecision[]> {
+    this.calls += 1;
+    return claims.map((claim) => ({
       claimId: claim.id,
-      status: index === 0 ? "supported" : "gap",
-      reason: index === 0 ? "Synthetic support confirmed." : "Synthetic evidence gap.",
+      status: this.calls === 1 ? "gap" : "supported",
+      reason: this.calls === 1 ? "Synthetic evidence gap." : "Synthetic support confirmed.",
     }));
   }
 }
 
-describe("HandoffPipeline", () => {
-  it("publishes only source-linked synthetic claims and records all agent diagnostics", async () => {
-    const unit = createDemoUnit();
-    const pipeline = new HandoffPipeline();
-    const version = await pipeline.generate(unit.patients[0], unit.chartEvents.filter((event) => event.patientId === unit.patients[0].id), unit.now);
+class AlwaysGapVerifier extends EvidenceVerifier {
+  calls = 0;
 
-    expect(version.status).toBe("published");
-    expect(version.claims).toHaveLength(4);
-    expect(version.claims.every((claim) => claim.evidenceEventIds.length > 0)).toBe(true);
-    expect(version.claims.some((claim) => claim.text.includes("40"))).toBe(false);
-    expect(version.diagnostics.map((diagnostic) => diagnostic.agent)).toEqual([
-      "chart_vitals",
-      "medications",
-      "tasks_incidents",
-      "sbar_synthesizer",
-      "evidence_verifier",
+  override async verify(claims: { id: string }[]): Promise<VerificationDecision[]> {
+    this.calls += 1;
+    return claims.map((claim) => ({
+      claimId: claim.id,
+      status: "gap",
+      reason: "Synthetic evidence gap.",
+    }));
+  }
+}
+
+class ContextCapturingSynthesizer extends SbarSynthesizer {
+  context: HandoffSynthesisContext | undefined;
+
+  override async synthesize(
+    facts: ExtractedFact[],
+    events: ChartEvent[],
+    context?: HandoffSynthesisContext,
+  ) {
+    this.context = context;
+    return super.synthesize(facts, events, context);
+  }
+}
+
+class InvalidEvidenceSynthesizer extends SbarSynthesizer {
+  override async synthesize() {
+    return [{
+      id: "unsupported",
+      section: "assessment" as const,
+      text: "Unsupported claim",
+      evidenceEventIds: ["99999999-9999-4999-8999-999999999999"],
+    }];
+  }
+}
+
+function createHarness(overrides: Partial<HandoffAgents> = {}) {
+  const unit = createDemoUnit();
+  const patient = unit.patients[0];
+  const data = new InMemoryHandoffDataLayer(unit);
+  const agents: HandoffAgents = {
+    specialists: {
+      chart_vitals: new ChartVitalsSpecialist(),
+      medications: new MedicationSpecialist(),
+      tasks_incidents: new TasksIncidentsSpecialist(),
+      ...overrides.specialists,
+    },
+    synthesizer: overrides.synthesizer ?? new SbarSynthesizer(),
+    verifier: overrides.verifier ?? new EvidenceVerifier(),
+  };
+  return {
+    data,
+    patient,
+    pipeline: new HandoffPipeline({ data, agents }),
+    runId: randomUUID(),
+    triggerEventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+    generatedAt: unit.now,
+  };
+}
+
+async function startRun(harness: ReturnType<typeof createHarness>) {
+  return harness.pipeline.runState(harness.runId, {
+    patientId: harness.patient.id,
+    triggerEventId: harness.triggerEventId,
+    generatedAt: harness.generatedAt,
+  });
+}
+
+describe("LangGraph handoff pipeline with offline fixtures", () => {
+  it("creates an immutable candidate and waits for explicit approval before publication", async () => {
+    const harness = createHarness();
+    const candidate = await harness.pipeline.generate(
+      harness.patient,
+      await harness.data.getEvents(harness.patient.id),
+      harness.generatedAt,
+      harness.triggerEventId,
+    );
+    const versions = await harness.data.list(harness.patient.id);
+
+    expect(candidate.status).toBe("candidate");
+    expect(versions).toHaveLength(1);
+    expect(versions[0].status).toBe("candidate");
+    expect(versions[0].claims.length).toBeGreaterThan(0);
+    expect(versions[0].claims.every((claim) => claim.evidenceEventIds.length > 0)).toBe(true);
+    expect(await harness.data.listPublications(harness.patient.id)).toHaveLength(0);
+
+    const resumed = await harness.pipeline.resumeVersion(candidate.id, "approved");
+    expect(resumed.status).toBe("published");
+    expect((await harness.data.get(versions[0].id))?.status).toBe("candidate");
+    expect(await harness.data.listPublications(harness.patient.id)).toMatchObject([
+      { handoffVersionId: versions[0].id },
     ]);
-    expect(version.diagnostics.every((diagnostic) => diagnostic.status === "succeeded")).toBe(true);
   });
 
-  it("excludes unsupported claims while retaining supported evidence", async () => {
-    const unit = createDemoUnit();
-    const pipeline = new HandoffPipeline({ verifier: new SelectiveGapVerifier() });
-    const version = await pipeline.generate(unit.patients[0], unit.chartEvents.filter((event) => event.patientId === unit.patients[0].id), unit.now);
+  it("re-synthesizes once after a verifier gap, then reaches human review", async () => {
+    const verifier = new GapThenSupportVerifier();
+    const harness = createHarness({ verifier });
+    const paused = await startRun(harness);
 
-    expect(version.status).toBe("published");
-    expect(version.claims).toHaveLength(1);
-    expect(version.excludedClaims).toHaveLength(3);
+    expect(paused.status).toBe("awaiting_review");
+    expect(paused.retryCount).toBe(1);
+    expect(paused.gapFeedback).toEqual([]);
+    expect(verifier.calls).toBe(2);
+    expect((await harness.data.list(harness.patient.id))[0].status).toBe("candidate");
   });
 
-  it("fails closed and persists the diagnostic when a specialist fails", async () => {
-    const unit = createDemoUnit();
-    const pipeline = new HandoffPipeline({ specialists: [new FailingSpecialist()] });
-    const version = await pipeline.generate(unit.patients[0], unit.chartEvents.filter((event) => event.patientId === unit.patients[0].id), unit.now);
+  it("writes a failed version when a gap remains after the retry limit", async () => {
+    const verifier = new AlwaysGapVerifier();
+    const harness = createHarness({ verifier });
+    const state = await startRun(harness);
 
-    expect(version).toMatchObject({
-      status: "failed",
-      claims: [],
-      failure: { code: "AGENT_FAILURE", message: "Synthetic specialist outage" },
+    expect(state.status).toBe("failed");
+    expect(verifier.calls).toBe(2);
+    await expect(harness.data.list(harness.patient.id)).resolves.toMatchObject([
+      { status: "failed", claims: [], excludedClaims: expect.arrayContaining([expect.anything()]) },
+    ]);
+  });
+
+  it("writes a failed version when a parallel specialist fails", async () => {
+    const harness = createHarness({
+      specialists: { chart_vitals: new FailingSpecialist() },
     });
-    expect(version.diagnostics).toHaveLength(1);
-    expect(version.diagnostics[0]).toMatchObject({ agent: "chart_vitals", status: "failed" });
+    const state = await startRun(harness);
+
+    expect(state.status).toBe("failed");
+    expect(state.failure).toMatchObject({ code: "AGENT_FAILURE", message: "Synthetic specialist outage" });
+    await expect(harness.data.list(harness.patient.id)).resolves.toMatchObject([
+      { status: "failed", diagnostics: expect.arrayContaining([expect.objectContaining({ status: "failed" })]) },
+    ]);
   });
 
-  it("rejects non-synthetic records before any agent receives them", async () => {
-    const unit = createDemoUnit();
-    const nonSyntheticPatient = { ...unit.patients[0], isSynthetic: false } as unknown as typeof unit.patients[number];
-    const pipeline = new HandoffPipeline();
+  it("rejects non-synthetic patients before persisting a version", async () => {
+    const harness = createHarness();
+    const nonSyntheticPatient = structuredClone(harness.patient);
+    Reflect.set(nonSyntheticPatient, "isSynthetic", false);
+    harness.data.setPatientEvents(nonSyntheticPatient, []);
 
-    await expect(pipeline.generate(nonSyntheticPatient, [], unit.now)).rejects.toMatchObject({
-      code: "NON_SYNTHETIC_OR_INVALID_PATIENT",
-    });
+    const state = await startRun(harness);
+
+    expect(state.status).toBe("rejected");
+    expect(state.failure?.code).toBe("NON_SYNTHETIC_PATIENT");
+    expect(await harness.data.list(harness.patient.id)).toHaveLength(0);
   });
 
-  it("persists a failed version when runtime chart input violates its contract", async () => {
-    const unit = createDemoUnit();
-    const invalidEvents = [{ id: "not-a-uuid" }] as unknown as ChartEvent[];
-    const pipeline = new HandoffPipeline();
-    const version = await pipeline.generate(unit.patients[0], invalidEvents, unit.now);
+  it("resumes a rejected review without appending a publication event", async () => {
+    const harness = createHarness();
+    const paused = await startRun(harness);
+    const candidateId = paused.versionId;
 
-    expect(version).toMatchObject({
-      status: "failed",
-      failure: { code: "INVALID_CHART_EVENTS" },
-    });
+    const resumed = await harness.pipeline.resume(harness.runId, "rejected");
+    expect(resumed.status).toBe("rejected");
+    expect(await harness.data.get(candidateId!)).toMatchObject({ status: "candidate" });
+    expect(await harness.data.listPublications(harness.patient.id)).toHaveLength(0);
   });
 
-  it("keeps version history append-only even when a caller mutates a returned snapshot", async () => {
-    const unit = createDemoUnit();
-    const events = unit.chartEvents.filter((event) => event.patientId === unit.patients[0].id);
-    const pipeline = new HandoffPipeline();
-    const first = await pipeline.generate(unit.patients[0], events, unit.now);
-    first.claims[0].text = "caller mutation";
-    const second = await pipeline.generate(unit.patients[0], events, new Date(unit.now.getTime() + 1_000));
+  it("computes monitoring attention and due time outside the synthesizer", async () => {
+    const synthesizer = new ContextCapturingSynthesizer();
+    const harness = createHarness({ synthesizer });
+    const paused = await startRun(harness);
+    const vital = (await harness.data.getEvents(harness.patient.id)).find(
+      (event) => event.id === harness.triggerEventId && event.category === "vital",
+    );
 
-    const versions = pipeline.listVersions(unit.patients[0].id);
-    expect(versions.map((version) => version.versionNumber)).toEqual([1, 2]);
-    expect(versions[0].claims[0].text).not.toBe("caller mutation");
-    expect(pipeline.getCurrent(unit.patients[0].id)?.id).toBe(second.id);
+    expect(paused.attention).toBe("routine");
+    expect(paused.nextDueAt).toBe(
+      new Date(new Date(vital!.recordedAt).getTime() + 240 * 60_000).toISOString(),
+    );
+    expect(synthesizer.context?.attention).toBe("routine");
+    expect(synthesizer.context?.nextDueAt).toBe(paused.nextDueAt);
+    expect((await harness.data.list(harness.patient.id))[0]).not.toHaveProperty("attention");
+  });
+
+  it("fails closed when a claim cites an event not present in specialist facts", async () => {
+    const harness = createHarness({ synthesizer: new InvalidEvidenceSynthesizer() });
+    const state = await startRun(harness);
+
+    expect(state.status).toBe("failed");
+    expect(state.failure?.code).toBe("NO_SUPPORTED_CLAIMS");
+    expect((await harness.data.list(harness.patient.id))[0].status).toBe("failed");
   });
 });

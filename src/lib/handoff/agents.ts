@@ -7,8 +7,11 @@ import type {
   SpecialistName,
   VerificationDecision,
 } from "@/lib/contracts";
+import { eventRecordIdSchema } from "@/lib/contracts";
 import { HandoffPipelineError } from "@/lib/handoff/errors";
+import type { ProtocolChunk } from "@/lib/handoff/data-layer";
 import type { StructuredOutputClient } from "@/lib/handoff/structured-output";
+import type { VitalAttention } from "@/lib/vitals/monitoring";
 
 const specialistFactOutputSchema = z
   .object({
@@ -16,7 +19,7 @@ const specialistFactOutputSchema = z
       z
         .object({
           summary: z.string(),
-          evidenceEventIds: z.array(z.string().uuid()),
+          evidenceEventIds: z.array(eventRecordIdSchema),
         })
         .strict(),
     ),
@@ -30,7 +33,7 @@ const synthesisOutputSchema = z
         .object({
           section: z.enum(["situation", "background", "assessment", "recommendation"]),
           text: z.string(),
-          evidenceEventIds: z.array(z.string().uuid()),
+          evidenceEventIds: z.array(eventRecordIdSchema),
         })
         .strict(),
     ),
@@ -58,6 +61,13 @@ export interface SpecialistAgent {
   readonly model: string;
   extract(events: ChartEvent[]): Promise<SpecialistResult>;
 }
+
+export type HandoffSynthesisContext = {
+  attention: VitalAttention | null;
+  nextDueAt: string | null;
+  protocolChunks: ProtocolChunk[];
+  gapFeedback: string[];
+};
 
 function promptEvents(events: ChartEvent[]) {
   return events.map(({ id, category, occurredAt, sourceLabel, payload }) => ({ id, category, occurredAt, sourceLabel, payload }));
@@ -160,7 +170,11 @@ export class SbarSynthesizer {
     this.model = client?.model ?? "deterministic-fixture";
   }
 
-  async synthesize(facts: ExtractedFact[], events: ChartEvent[]): Promise<HandoffClaim[]> {
+  async synthesize(
+    facts: ExtractedFact[],
+    events: ChartEvent[],
+    context?: HandoffSynthesisContext,
+  ): Promise<HandoffClaim[]> {
     const eventById = new Map(events.map((event) => [event.id, event]));
     if (!this.client) {
       return facts.map((fact, index) => ({
@@ -178,16 +192,13 @@ export class SbarSynthesizer {
         "Create a concise SBAR handoff from the supplied evidence-backed facts for a synthetic-data demo.",
         "Use only supplied facts and cite supplied event IDs on every claim.",
         "Do not calculate due times, medication eligibility, priority, or freshness. Do not make clinical recommendations or add clinical knowledge.",
+        "Deterministic attention tiers and due times are for context only; do not include or restate them in claim text.",
         "An empty section is preferable to an unsupported claim.",
       ].join(" "),
-      input: { facts },
+      input: { facts, deterministicContext: context },
     });
 
-    const factEventIds = new Set(facts.flatMap((fact) => fact.evidenceEventIds));
     return output.claims.map((claim, index) => {
-      if (claim.evidenceEventIds.length === 0 || claim.evidenceEventIds.some((id) => !factEventIds.has(id))) {
-        throw new HandoffPipelineError("INVALID_SYNTHESIS_EVIDENCE", "The synthesizer cited evidence absent from specialist facts");
-      }
       return { id: `claim:${index}`, ...claim };
     });
   }

@@ -8,9 +8,11 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:graph": "vitest run src/lib/handoff/graph"
   },
   "dependencies": {
+    "@langchain/langgraph": "^1.4.21",
     "@supabase/supabase-js": "^2.117.2",
     "next": "^16.3.6",
     "openai": "^7.23.0",

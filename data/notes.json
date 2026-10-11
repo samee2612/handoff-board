@@ -1,0 +1,8 @@
+{
+  "patient_id": "demo-patient-1",
+  "entries": [
+    {"id": "n1", "time": "16:00", "text": "BP 88/54"},
+    {"id": "n2", "time": "16:30", "text": "Patient says feeling dizzy"},
+    {"id": "n3", "time": "17:00", "text": "Recheck BP before 5 pm (task)"}
+  ]
+}

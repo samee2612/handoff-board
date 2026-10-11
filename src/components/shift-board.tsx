@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ChartEvent, HandoffVersion, VitalMonitoringPlan } from "@/lib/contracts";
+import type { ChartEvent, HandoffPublication, HandoffReview, HandoffVersion, VitalMonitoringPlan } from "@/lib/contracts";
 import type { DemoNurse } from "@/lib/demo/seed-data";
 import type { FoundationPatientSnapshot } from "@/lib/engine/board";
 import { applySourceEvent, createLiveBoardState } from "@/lib/board/live-board";
@@ -16,6 +16,8 @@ type ShiftBoardProps = {
   events: ChartEvent[];
   handoffs: HandoffVersion[];
   candidates: HandoffVersion[];
+  reviews: HandoffReview[];
+  publications?: HandoffPublication[];
   nurses: DemoNurse[];
   vitalMonitoringPlans: VitalMonitoringPlan[];
   demoNow: string;
@@ -50,7 +52,7 @@ function nextHandoffLine(status: VitalMonitoringStatus): string {
   return `Latest ${label}: ${status.displayValue} at ${time(status.latestEvent?.recordedAt)}. Next ${label} check: ${time(status.nextDueAt)}.${flag}`;
 }
 
-export function ShiftBoard({ snapshots, events, handoffs, candidates, nurses, vitalMonitoringPlans, demoNow, boardMode, sourceMessage }: ShiftBoardProps) {
+export function ShiftBoard({ snapshots, events, handoffs, candidates, reviews, publications, nurses, vitalMonitoringPlans, demoNow, boardMode, sourceMessage }: ShiftBoardProps) {
   const [selectedNurseId, setSelectedNurseId] = useState(nurses[0]?.id ?? "");
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);

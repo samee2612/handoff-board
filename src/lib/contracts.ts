@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 export const isoDateTime = z.string().datetime({ offset: true });
+export const patientRecordIdSchema = z.string().uuid().or(z.string().regex(/^pt-\d+$/));
+export const eventRecordIdSchema = z.string().uuid().or(z.string().regex(/^evt-\d+$/));
 
 export const chartEventCategorySchema = z.enum([
   "nursing_note",
@@ -22,7 +24,7 @@ export const vitalTypeSchema = z.enum([
 export type VitalType = z.infer<typeof vitalTypeSchema>;
 
 export const patientSchema = z.object({
-  id: z.string().uuid(),
+  id: patientRecordIdSchema,
   unitId: z.string().uuid(),
   isSynthetic: z.literal(true),
   displayName: z.string().min(1),
@@ -34,8 +36,8 @@ export const patientSchema = z.object({
 export type Patient = z.infer<typeof patientSchema>;
 
 const eventBaseSchema = z.object({
-  id: z.string().uuid(),
-  patientId: z.string().uuid(),
+  id: eventRecordIdSchema,
+  patientId: patientRecordIdSchema,
   occurredAt: isoDateTime,
   recordedAt: isoDateTime,
   sourceLabel: z.string().min(1),
@@ -97,7 +99,7 @@ export type ChartEvent = z.infer<typeof chartEventSchema>;
 
 export const alertSchema = z.object({
   id: z.string(),
-  patientId: z.string().uuid(),
+  patientId: patientRecordIdSchema,
   eventId: z.string().uuid(),
   kind: z.enum(["scheduled_medication", "eligible_prn", "task"]),
   priority: z.enum(["overdue", "imminent"]),
@@ -112,7 +114,7 @@ export type ActionAlert = z.infer<typeof alertSchema>;
 export const vitalMonitoringPlanSchema = z
   .object({
     id: z.string().uuid(),
-    patientId: z.string().uuid(),
+    patientId: patientRecordIdSchema,
     vitalType: vitalTypeSchema,
     intervalMinutes: z.number().int().min(15).max(24 * 60),
     attentionBelow: z.number().optional(),
@@ -149,7 +151,7 @@ export const extractedFactSchema = z
     id: z.string().min(1),
     specialist: specialistNameSchema,
     summary: z.string().min(1),
-    evidenceEventIds: z.array(z.string().uuid()).min(1),
+    evidenceEventIds: z.array(eventRecordIdSchema).min(1),
   })
   .strict();
 export type ExtractedFact = z.infer<typeof extractedFactSchema>;
@@ -162,7 +164,7 @@ export const handoffClaimSchema = z
     id: z.string().min(1),
     section: sbarSectionSchema,
     text: z.string().min(1),
-    evidenceEventIds: z.array(z.string().uuid()).min(1),
+    evidenceEventIds: z.array(eventRecordIdSchema).min(1),
   })
   .strict();
 export type HandoffClaim = z.infer<typeof handoffClaimSchema>;
@@ -201,7 +203,7 @@ export const handoffVersionSchema = z
   .object({
     id: z.string().uuid(),
     versionNumber: z.number().int().positive(),
-    patientId: z.string().uuid(),
+    patientId: patientRecordIdSchema,
     sourceEventCutoff: isoDateTime,
     generatedAt: isoDateTime,
     model: z.string().min(1),
@@ -244,7 +246,7 @@ export type HandoffReview = z.infer<typeof handoffReviewSchema>;
 export const handoffPublicationSchema = z
   .object({
     id: z.string().uuid(),
-    patientId: z.string().uuid(),
+    patientId: patientRecordIdSchema,
     handoffVersionId: z.string().uuid(),
     publishedByNurseId: z.string().uuid().nullable(),
     note: z.string().max(2_000).nullable(),
