@@ -23,13 +23,17 @@ START -> load_context -> deterministic_engine -> retrieve_protocols
 ```
 
 `load_context` accepts only a synthetic patient and events belonging to that patient.
+Fixture contracts also accept `demo-patient-N` patient IDs and the `nN`/`mNN` note IDs used by
+`data/notes*.json`, preserving those IDs in citations. Supabase tables remain UUID-backed; these
+file-based fixture IDs are for in-memory runs and are not database IDs.
 `deterministic_engine` calls `evaluateHandoffRules`; no model chooses thresholds, attention, trends,
 or due times. Protocol retrieval happens after this node, so retrieved text cannot affect
 deterministic calculations. The engine checks synthetic plausibility ranges, emits trend facts for the last four
-valid systolic-BP or heart-rate readings in the prior eight hours, and separately flags unparsed
-vital notes, out-of-range values, attention levels, and overdue open tasks. Trend thresholds and
-the reading count/window can be configured in the helper; invalid readings are excluded from both
-trends and plan attention. These flags are displayed separately and are never claims.
+valid systolic-BP or heart-rate readings in the prior eight hours, and separately flags malformed BP
+values, out-of-range values, attention levels, and overdue open tasks. Attention uses the most severe
+valid reading for the configured vital type during the run; `nextDueAt` uses the latest valid reading.
+Trend thresholds and the reading count/window can be configured in the helper; invalid readings are
+excluded from both trends and plan attention. These flags are displayed separately and are never claims.
 
 Each specialist receives only its event categories. Synthesis receives specialist and deterministic
 trend facts plus protocol context. The verifier can see the retrieved chunks; any chunk citation

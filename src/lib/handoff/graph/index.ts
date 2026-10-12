@@ -125,12 +125,13 @@ export function routeAfterVerify(state: VerifyRouteState):
   | "synthesize_sbar"
   | "assemble_candidate" {
   if (state.status === "failed") return "failure_sink";
-  if (
-    (state.excludedClaims.length > 0 || state.gapFeedback.length > 0) &&
-    state.retryCount < state.maxRetries
-  ) return "synthesize_sbar";
-  if (state.excludedClaims.length > 0 || state.gapFeedback.length > 0) return "failure_sink";
+  if (state.gapFeedback.length > 0) {
+    return state.retryCount < state.maxRetries ? "synthesize_sbar" : "failure_sink";
+  }
   if (state.supportedClaims.length > 0) return "assemble_candidate";
+  if (state.excludedClaims.length > 0) {
+    return state.retryCount < state.maxRetries ? "synthesize_sbar" : "failure_sink";
+  }
   return "failure_sink";
 }
 
@@ -209,7 +210,22 @@ function sourceEventCutoff(events: ChartEvent[], fallback: string): string {
 }
 
 function numericTokens(value: string): string[] {
-  return value.match(/\b\d+(?:\.\d+)?\b/g) ?? [];
+  // Normalize clock times so note text "1200" matches a draft time "12:00".
+  const normalized = value.replace(
+    /\b([01]?\d|2[0-3]):([0-5]\d)\b/g,
+    (_match, hour: string, minute: string) => `${hour.padStart(2, "0")}${minute}`,
+  );
+  // Digits attached to units (for example, "500ml") still count as numeric evidence.
+  return normalized.match(/\d+(?:\.\d+)?/g) ?? [];
+}
+
+function claimKey(claim: HandoffClaim): string {
+  return JSON.stringify({
+    section: claim.section,
+    text: claim.text,
+    evidenceEventIds: claim.evidenceEventIds,
+    evidenceProtocolChunkIds: claim.evidenceProtocolChunkIds ?? [],
+  });
 }
 
 function codeCheckClaims(
@@ -507,9 +523,13 @@ export function buildHandoffGraph(
         const decision = decisionByClaim.get(claim.id);
         return decision?.status === "gap" ? [{ claim, reason: decision.reason }] : [];
       });
-      const supportedById = new Map([...state.supportedClaims, ...roundSupported].map((claim) => [claim.id, claim]));
-      const excludedById = new Map([...state.excludedClaims, ...roundExcluded].map((item) => [item.claim.id, item]));
-      for (const id of supportedById.keys()) excludedById.delete(id);
+      const supportedById = new Map(
+        [...state.supportedClaims, ...roundSupported].map((claim) => [claimKey(claim), claim]),
+      );
+      const excludedById = new Map(
+        [...state.excludedClaims, ...roundExcluded].map((item) => [claimKey(item.claim), item]),
+      );
+      for (const claim of roundSupported) excludedById.delete(claimKey(claim));
       return {
         decisions: effectiveDecisions,
         supportedClaims: [...supportedById.values()],

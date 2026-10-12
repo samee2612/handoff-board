@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:graph": "vitest run src/lib/handoff/graph",
+    "test:acceptance": "vitest run src/lib/handoff/graph/__tests__/acceptance.test.ts --reporter=verbose",
     "ingest:protocols": "tsx scripts/ingest-protocols.ts"
   },
   "dependencies": {

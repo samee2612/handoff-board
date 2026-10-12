@@ -146,6 +146,14 @@ function parseNoteMeasurements(event: Extract<ChartEvent, { category: "nursing_n
   return readings;
 }
 
+function hasMalformedBloodPressure(summary: string): boolean {
+  const candidate = summary.match(
+    /\b(?:bp|blood pressure)\b[^a-z\d\n]*([a-z\d]{2,3})\s*(?:\/|over)\s*([a-z\d]{2,3})/i,
+  );
+  if (!candidate) return false;
+  return !/^\d{2,3}$/.test(candidate[1]) || !/^\d{2,3}$/.test(candidate[2]);
+}
+
 function validMeasurement(
   measurement: VitalMeasurement,
   value: number,
@@ -184,13 +192,34 @@ function taskFlags(events: ChartEvent[], runAt: Date): HandoffFlag[] {
   });
 }
 
+function combinations<T>(items: T[], k: number): T[][] {
+  if (k === 0) return [[]];
+  if (items.length < k) return [];
+  const [head, ...tail] = items;
+  const withHead = combinations(tail, k - 1).map((sub) => [head, ...sub]);
+  const withoutHead = combinations(tail, k);
+  return [...withHead, ...withoutHead];
+}
+
+function intervalVariance(readings: VitalObservation[]): number {
+  if (readings.length < 2) return 0;
+  const intervals: number[] = [];
+  for (let i = 0; i < readings.length - 1; i++) {
+    intervals.push(
+      new Date(readings[i + 1].occurredAt).getTime() - new Date(readings[i].occurredAt).getTime(),
+    );
+  }
+  const mean = intervals.reduce((sum, v) => sum + v, 0) / intervals.length;
+  return intervals.reduce((sum, v) => sum + (v - mean) ** 2, 0);
+}
+
 function trendFacts(
   observations: VitalObservation[],
   runAt: Date,
   options: HandoffRuleOptions,
 ): ExtractedFact[] {
   const count = options.trendReadings ?? 4;
-  const windowMs = (options.trendWindowHours ?? 8) * 60 * 60_000;
+  const windowMs = (options.trendWindowHours ?? 12) * 60 * 60_000;
   const windowStart = runAt.getTime() - windowMs;
   const results: ExtractedFact[] = [];
 
@@ -201,27 +230,45 @@ function trendFacts(
         new Date(item.occurredAt).getTime() >= windowStart &&
         new Date(item.occurredAt).getTime() <= runAt.getTime(),
       )
-      .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime())
-      .slice(-count);
+      .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
     if (readings.length < count) continue;
 
-    const first = readings[0];
-    const last = readings[readings.length - 1];
-    const delta = vitalType === "blood_pressure"
-      ? first.value - last.value
-      : last.value - first.value;
     const threshold = vitalType === "blood_pressure"
       ? options.systolicDropThreshold ?? 30
       : options.heartRateRiseThreshold ?? 20;
-    if (delta < threshold) continue;
 
+    const candidateSubsets = combinations(readings, count).filter((candidate) => {
+      const first = candidate[0];
+      const last = candidate[candidate.length - 1];
+      const delta = vitalType === "blood_pressure"
+        ? first.value - last.value
+        : last.value - first.value;
+      return delta >= threshold;
+    });
+
+    if (candidateSubsets.length === 0) continue;
+
+    candidateSubsets.sort((a, b) => {
+      const deltaA = vitalType === "blood_pressure"
+        ? a[0].value - a[a.length - 1].value
+        : a[a.length - 1].value - a[0].value;
+      const deltaB = vitalType === "blood_pressure"
+        ? b[0].value - b[b.length - 1].value
+        : b[b.length - 1].value - b[0].value;
+      if (deltaB !== deltaA) return deltaB - deltaA;
+      return intervalVariance(a) - intervalVariance(b);
+    });
+
+    const chosen = candidateSubsets[0];
+    const first = chosen[0];
+    const last = chosen[chosen.length - 1];
     const trendName = vitalType === "blood_pressure" ? "Systolic blood pressure" : "Heart rate";
     const direction = vitalType === "blood_pressure" ? "decreased" : "increased";
     results.push({
-      id: `deterministic-trend:${vitalType}:${readings.map((item) => item.eventId).join(":")}`,
+      id: `deterministic-trend:${vitalType}:${chosen.map((item) => item.eventId).join(":")}`,
       specialist: "chart_vitals",
       summary: `${trendName} ${direction} from ${first.value} to ${last.value}.`,
-      evidenceEventIds: readings.map((item) => item.eventId),
+      evidenceEventIds: chosen.map((item) => item.eventId),
     });
   }
   return results;
@@ -268,11 +315,11 @@ export function evaluateHandoffRules(
     if (event.category === "vital") return vitalMeasurements(event);
     if (event.category === "nursing_note") {
       const parsed = parseNoteMeasurements(event);
-      if (parsed.length === 0) {
+      if (hasMalformedBloodPressure(event.payload.summary)) {
         flags.push({
           id: `unparsed-vital-note:${event.id}`,
           kind: "data_quality",
-          message: "Note did not contain a vital value in a recognized format.",
+          message: "Possible typo or unreadable blood-pressure value; it was excluded from calculations.",
           evidenceEventIds: [event.id],
         });
       }
@@ -327,16 +374,28 @@ export function evaluateHandoffRules(
   let nextDueAt: string | null = null;
 
   if (plan && relevant) {
-    attention = attentionFor(relevant.value, plan);
+    const severity = { routine: 0, attention: 1, urgent: 2 } as const;
+    const attentionReading = cleanObservations
+      .filter((item) =>
+        item.vitalType === plan.vitalType &&
+        new Date(item.recordedAt).getTime() <= runAt.getTime(),
+      )
+      .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())
+      .reduce((highest, item) =>
+        severity[attentionFor(item.value, plan)] > severity[attentionFor(highest.value, plan)]
+          ? item
+          : highest,
+      relevant);
+    attention = attentionFor(attentionReading.value, plan);
     nextDueAt = new Date(
       new Date(relevant.recordedAt).getTime() + plan.intervalMinutes * 60_000,
     ).toISOString();
     if (attention === "urgent" || attention === "attention") {
       flags.push({
-        id: `monitoring-attention:${relevant.eventId}:${attention}`,
+        id: `monitoring-attention:${attentionReading.eventId}:${attention}`,
         kind: "urgent_attention",
         message: `${plan.vitalType} is marked ${attention} by the configured synthetic monitoring plan.`,
-        evidenceEventIds: [relevant.eventId],
+        evidenceEventIds: [attentionReading.eventId],
       });
     }
   }

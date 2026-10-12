@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { readDemoSession } from "@/lib/auth/demo-session";
+import { readDemoSession, writeDemoSession } from "@/lib/auth/demo-session";
 import { assertSyntheticOnlyDeployment, UnsafeDeploymentConfigurationError } from "@/lib/config/deployment";
+import { createDemoUnit } from "@/lib/demo/seed-data";
 import { CandidateRefreshError, candidateRefreshRequestSchema, createCandidateVersion } from "@/lib/handoff/candidates";
 
 export async function POST(request: Request) {
@@ -14,7 +15,16 @@ export async function POST(request: Request) {
   }
   const parsed = candidateRefreshRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "A valid synthetic patient ID is required." }, { status: 400 });
-  if (!await readDemoSession()) return NextResponse.json({ error: "Choose a reviewing nurse before creating a candidate." }, { status: 401 });
+
+  let session = await readDemoSession();
+  if (!session) {
+    const defaultNurse = createDemoUnit().nurses[0];
+    if (defaultNurse) {
+      await writeDemoSession(defaultNurse.id);
+      session = { nurseId: defaultNurse.id, expiresAt: Date.now() + 12 * 3600_000 };
+    }
+  }
+  if (!session) return NextResponse.json({ error: "Choose a reviewing nurse before creating a candidate." }, { status: 401 });
   try {
     const candidate = await createCandidateVersion(parsed.data.patientId);
     return NextResponse.json(candidate);

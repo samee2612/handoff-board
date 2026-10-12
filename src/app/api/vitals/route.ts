@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { readDemoSession } from "@/lib/auth/demo-session";
+import { readDemoSession, writeDemoSession } from "@/lib/auth/demo-session";
 import { assertSyntheticOnlyDeployment, UnsafeDeploymentConfigurationError } from "@/lib/config/deployment";
+import { createDemoUnit } from "@/lib/demo/seed-data";
 import { createOptionalSupabaseServiceClient } from "@/lib/supabase/server-client";
 import { recordSyntheticVitalComment, VitalRecordingError, vitalCommentRequestSchema } from "@/lib/vitals/recording";
 import { VitalNoteExtractionError } from "@/lib/vitals/note-agent";
@@ -12,7 +13,17 @@ export async function POST(request: Request) {
     if (error instanceof UnsafeDeploymentConfigurationError) return NextResponse.json({ error: "This hosted demo is not configured for synthetic-only operation." }, { status: 503 });
     throw error;
   }
-  if (createOptionalSupabaseServiceClient() && !await readDemoSession()) return NextResponse.json({ error: "Choose a fictional nurse before recording a shared vital." }, { status: 401 });
+  let session = await readDemoSession();
+  if (!session && createOptionalSupabaseServiceClient()) {
+    const defaultNurse = createDemoUnit().nurses[0];
+    if (defaultNurse) {
+      await writeDemoSession(defaultNurse.id);
+      session = { nurseId: defaultNurse.id, expiresAt: Date.now() + 12 * 3600_000 };
+    }
+  }
+  if (createOptionalSupabaseServiceClient() && !session) {
+    return NextResponse.json({ error: "Choose a fictional nurse before recording a shared vital." }, { status: 401 });
+  }
   const parsed = vitalCommentRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Write a supported synthetic vital update." }, { status: 400 });
   try {

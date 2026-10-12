@@ -58,7 +58,7 @@ function toPublication(row: unknown): HandoffPublication | null {
 }
 
 async function fixtureBoard(mode: Exclude<BoardMode, "realtime">, sourceMessage?: string): Promise<LoadedBoard> {
-  const demo = createDemoUnit();
+  const demo = createDemoUnit(undefined, true);
   const pipeline = new HandoffPipeline();
   const handoffs = await Promise.all(demo.patients.map((patient) => pipeline.generate(
     patient,
@@ -177,7 +177,7 @@ export async function loadSyntheticPatientAndEvents(patientId: string) {
 
 export async function loadSyntheticVitalMonitoringPlans(patientId: string): Promise<VitalMonitoringPlan[]> {
   const client = createOptionalSupabaseServiceClient();
-  if (!client) return createDemoUnit().vitalMonitoringPlans.filter((plan) => plan.patientId === patientId);
+  if (!client) return createDemoUnit(undefined, true).vitalMonitoringPlans.filter((plan) => plan.patientId === patientId);
   const result = await client
     .from("patient_vital_monitoring_plans")
     .select("id, patient_id, vital_type, interval_minutes, attention_below, attention_above, urgent_below, urgent_above")

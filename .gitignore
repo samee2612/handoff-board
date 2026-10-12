@@ -7,3 +7,7 @@ CLAUDE.md
 !.env.example
 coverage
 *.tsbuildinfo
+.DS_Store
+__pycache__
+output
+

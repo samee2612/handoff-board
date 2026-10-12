@@ -1,8 +1,13 @@
 import { z } from "zod";
 
 export const isoDateTime = z.string().datetime({ offset: true });
-export const patientRecordIdSchema = z.string().uuid().or(z.string().regex(/^pt-\d+$/));
-export const eventRecordIdSchema = z.string().uuid().or(z.string().regex(/^evt-\d+$/));
+// Demo IDs keep the source identifiers from data/notes*.json visible in fixture handoffs.
+export const patientRecordIdSchema = z.string().uuid()
+  .or(z.string().regex(/^pt-\d+$/))
+  .or(z.string().regex(/^demo-patient-\d+$/));
+export const eventRecordIdSchema = z.string().uuid()
+  .or(z.string().regex(/^evt-\d+$/))
+  .or(z.string().regex(/^(?:n\d+|m\d{2})$/));
 
 export const chartEventCategorySchema = z.enum([
   "nursing_note",

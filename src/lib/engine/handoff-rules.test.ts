@@ -151,6 +151,56 @@ describe("deterministic handoff trend, plausibility, and task rules", () => {
     expect(result.observations).toEqual([]);
   });
 
+  it("flags a malformed BP without discarding a separately valid HR", () => {
+    const note: ChartEvent = {
+      id: "evt-912",
+      patientId: PATIENT_ID,
+      category: "nursing_note",
+      occurredAt: at(17, 15),
+      recordedAt: at(17, 15),
+      sourceLabel: "Synthetic nursing note fixture",
+      payload: { summary: "BP 1O4/6O HR 102" },
+    };
+    const result = evaluateHandoffRules([note], null, new Date(at(18)));
+
+    expect(result.flags).toEqual([
+      expect.objectContaining({
+        kind: "data_quality",
+        evidenceEventIds: ["evt-912"],
+      }),
+    ]);
+    expect(result.observations).toEqual([
+      expect.objectContaining({ vitalType: "heart_rate", value: 102, eventId: "evt-912" }),
+    ]);
+  });
+
+  it("does not flag ordinary narrative notes as malformed vital values", () => {
+    const note: ChartEvent = {
+      id: "evt-911",
+      patientId: PATIENT_ID,
+      category: "nursing_note",
+      occurredAt: at(17, 15),
+      recordedAt: at(17, 15),
+      sourceLabel: "Synthetic nursing note fixture",
+      payload: { summary: "Patient comfortable and eating breakfast" },
+    };
+    expect(evaluateHandoffRules([note], null, new Date(at(18))).flags).toEqual([]);
+  });
+
+  it("retains an earlier urgent reading when a later BP is above the attention threshold", () => {
+    const events = bloodPressureReadings([88, 101]);
+    const result = evaluateHandoffRules(events, plan(), new Date(at(18)));
+
+    expect(result.attention).toBe("urgent");
+    expect(result.nextDueAt).toBe(at(12));
+    expect(result.flags).toEqual([
+      expect.objectContaining({
+        kind: "urgent_attention",
+        evidenceEventIds: ["evt-901"],
+      }),
+    ]);
+  });
+
   it("emits a heart-rate trend when the rise reaches 20", () => {
     const events: ChartEvent[] = [80, 85, 91, 101].map((heartRate, index) => ({
       id: `evt-${920 + index}`,

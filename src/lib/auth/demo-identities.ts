@@ -20,14 +20,17 @@ export async function findControlledDemoNurse(value: unknown): Promise<DemoNurse
     .select("id, display_name, unit_id")
     .eq("id", parsed.data)
     .maybeSingle();
-  if (nurseError || !nurse) return null;
-  const { data: syntheticPatient, error: patientError } = await client
-    .from("patients")
-    .select("id")
-    .eq("unit_id", nurse.unit_id)
-    .eq("is_synthetic", true)
-    .limit(1)
-    .maybeSingle();
-  if (patientError || !syntheticPatient) return null;
-  return { id: nurse.id, displayName: nurse.display_name };
+  if (!nurseError && nurse) {
+    const { data: syntheticPatient, error: patientError } = await client
+      .from("patients")
+      .select("id")
+      .eq("unit_id", nurse.unit_id)
+      .eq("is_synthetic", true)
+      .limit(1)
+      .maybeSingle();
+    if (!patientError && syntheticPatient) {
+      return { id: nurse.id, displayName: nurse.display_name };
+    }
+  }
+  return createDemoUnit().nurses.find((nurse) => nurse.id === parsed.data) ?? null;
 }
